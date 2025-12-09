@@ -10,8 +10,7 @@
     "storage"
   ],
   "host_permissions": [
-    "*://*.instructure.com/*",
-    "*://*.quiz-lti-*.instructure.com/*"
+    "*://*.instructure.com/*"
   ],
   "background": {
     "service_worker": "background.js",
@@ -21,7 +20,8 @@
     {
       "matches": ["*://*.instructure.com/*"],
       "js": ["content-script.js"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ],
   "action": {
