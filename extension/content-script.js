@@ -93,6 +93,39 @@ function isAllowedOrigin(origin) {
 }
 
 /**
+ * Check if origin is from Learnosity or Instructure domains
+ * Refinement E.1: Uses .endsWith() for strict subdomain validation
+ * Prevents false positives like malicious-learnosity.com.attacker.io
+ */
+function isLearnosityOrInstructureOrigin(origin) {
+  try {
+    const { hostname } = new URL(origin);
+    return (
+      hostname === "learnosity.com" ||
+      hostname.endsWith(".learnosity.com") ||
+      hostname === "instructure.com" ||
+      hostname.endsWith(".instructure.com")
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if an iframe is likely a Learnosity iframe
+ */
+function isLearnosityIframe(iframe) {
+  const src = iframe.src || "";
+  return (
+    src.includes("learnosity.com") ||
+    src.includes("assess.learnosity") ||
+    src.includes("items.learnosity") ||
+    src.includes("authorapi.learnosity") ||
+    src.includes("questionsapi.learnosity")
+  );
+}
+
+/**
  * Check if message likely comes from Learnosity/Canvas LTI
  * Reduces noise from Canvas UI messages (resize, analytics, routing)
  */
@@ -129,6 +162,38 @@ function extractUuidFromObject(obj) {
   
   const match = json.match(uuidRegex);
   return match ? match[1] : null;
+}
+
+/**
+ * Extract bank UUID using bank-specific patterns
+ * Refinement F: Handles bank_*, bank/, bank: prefixed UUIDs
+ * These patterns are more reliable indicators of actual bank UUIDs
+ */
+function extractBankUuidFromObject(obj) {
+  if (!obj || typeof obj !== "object") return null;
+  
+  let json;
+  try {
+    json = JSON.stringify(obj);
+  } catch {
+    return null;
+  }
+  
+  // Bank-specific patterns (more reliable)
+  const bankPatterns = [
+    /bank[_/:]([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
+    /"bankId"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/i,
+    /"bank_id"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/i,
+    /"resource_id"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/i
+  ];
+  
+  for (const pattern of bankPatterns) {
+    const match = json.match(pattern);
+    if (match) return match[1];
+  }
+  
+  // Fall back to generic UUID extraction
+  return extractUuidFromObject(obj);
 }
 
 // ============================================
@@ -192,6 +257,7 @@ function handleIframeUrlChange(iframe, url) {
     // Send message to background
     const payload = {
       type: "BANK_CONTEXT_DETECTED",
+      source: "iframe",
       iframeUrl: url,
       bankUuid: bankId, // Keep property name for backwards compatibility
       timestamp: Date.now()
@@ -218,6 +284,33 @@ function processIframe(iframe) {
 }
 
 /**
+ * Request background to inject hook script into Learnosity iframe
+ * Refinement G: Background will use webNavigation to find exact frameIds
+ */
+function requestLearnosityHookInjection(iframe) {
+  if (!isLearnosityIframe(iframe)) return;
+  
+  // Mark iframe to prevent duplicate injection requests
+  if (iframe.dataset.canvasExporterHookRequested) return;
+  iframe.dataset.canvasExporterHookRequested = "true";
+  
+  debugGroup("Requesting Learnosity hook injection", () => {
+    debugLog("Iframe src:", iframe.src);
+    
+    chrome.runtime.sendMessage({
+      type: "INJECT_LEARNOSITY_HOOK",
+      iframeSrc: iframe.src
+    }, (response) => {
+      if (chrome.runtime.lastError) {
+        debugLog("Injection request error:", chrome.runtime.lastError.message);
+        return;
+      }
+      debugLog("Injection response:", response);
+    });
+  });
+}
+
+/**
  * Handle an iframe: track it and attach load listener
  */
 function handleIframe(iframe) {
@@ -228,15 +321,21 @@ function handleIframe(iframe) {
   
   debugGroup("Iframe detected", () => {
     debugLog("src:", iframe.src || "(empty)");
+    debugLog("Is Learnosity:", isLearnosityIframe(iframe));
     debugLog("Tracking iframe for internal URL detection");
   });
   
   // Track this iframe
   trackedIframes.push(iframe);
   
+  // Request Learnosity hook injection if applicable
+  requestLearnosityHookInjection(iframe);
+  
   // Attach load listener for future loads
   iframe.addEventListener("load", () => {
     debugLog("Iframe load event fired");
+    // Re-check for Learnosity after load (src may have changed)
+    requestLearnosityHookInjection(iframe);
     // Small delay to allow internal navigation to complete
     setTimeout(() => processIframe(iframe), 100);
   });
@@ -283,6 +382,8 @@ function setupObserver() {
         if (mutation.type === "attributes" && mutation.target.nodeName === "IFRAME") {
           const iframe = mutation.target;
           debugLog("Iframe attribute changed:", mutation.attributeName);
+          // Re-check for Learnosity after src change
+          requestLearnosityHookInjection(iframe);
           // Process after attribute change
           setTimeout(() => processIframe(iframe), 100);
         }
@@ -326,6 +427,101 @@ function setupPolling() {
 }
 
 // ============================================
+// BRIDGE MESSAGE HANDLING (Phase 3.1)
+// ============================================
+
+/**
+ * Handle messages forwarded from injected Learnosity hook
+ * Refinement E: Validates origin using .endsWith() for security
+ * Refinement F: Uses bank-specific UUID extraction patterns
+ * Refinement F.1: debugTiming.latency is for debugging only (cross-frame clock skew)
+ */
+function handleBridgeMessage(event, bridgeData) {
+  const direction = bridgeData.direction || "unknown";
+  
+  if (DEBUG) console.groupCollapsed(`[CanvasExporter] Learnosity bridge message (${direction})`);
+  
+  try {
+    // Refinement E.1: Validate origin with .endsWith() for strict subdomain matching
+    if (!isLearnosityOrInstructureOrigin(event.origin)) {
+      debugLog("Bridge message from untrusted origin → ignoring");
+      debugLog("Origin was:", event.origin);
+      return;
+    }
+    debugLog("Origin validated ✓:", event.origin);
+    
+    const payload = bridgeData.innerMessage;
+    debugLog("Direction:", direction);
+    debugLog("Inner message:", payload);
+    debugLog("Source URL:", bridgeData.sourceUrl);
+    
+    if (!payload || typeof payload !== "object") {
+      debugLog("Inner message not an object → ignoring");
+      return;
+    }
+    
+    // Refinement F: Use bank-specific extraction first, fall back to generic
+    let uuid = 
+      extractBankUuidFromObject(payload) ||
+      extractBankUuidFromObject(payload?.data) ||
+      extractUuidFromObject(payload) ||
+      extractUuidFromObject(payload?.data) ||
+      null;
+    
+    // Reject partial UUIDs
+    if (!uuid || uuid.length < 36) {
+      debugLog("No valid UUID in bridge message → ignoring");
+      return;
+    }
+    
+    debugLog("Extracted UUID:", uuid);
+    
+    // Deduplicate
+    if (lastPostMessageBankUuid === uuid) {
+      debugLog("Duplicate UUID → ignoring");
+      return;
+    }
+    lastPostMessageBankUuid = uuid;
+    
+    // Track in recent banks
+    const isNewBank = trackRecentBankUuid(uuid);
+    debugLog("New bank in session:", isNewBank);
+    debugLog("Recent banks:", recentBankUuids);
+    
+    // Forward to background
+    // Refinement F.1: latency calculated from cross-frame timestamps is for debugging only
+    // Do not use for correctness logic due to potential clock skew between frames
+    const message = {
+      type: "BANK_CONTEXT_DETECTED",
+      source: "learnosity-bridge",
+      direction: direction,
+      bankUuid: uuid,
+      origin: event.origin,
+      sourceUrl: bridgeData.sourceUrl,
+      rawMessage: payload,
+      timestamp: Date.now(),
+      debugTiming: {
+        hookTimestamp: bridgeData.timestamp,
+        receivedAt: Date.now(),
+        // Note: latency may be inaccurate due to cross-frame clock skew - debug use only
+        latency: Date.now() - bridgeData.timestamp
+      }
+    };
+    
+    chrome.runtime.sendMessage(message, (response) => {
+      if (chrome.runtime.lastError) {
+        debugLog("Runtime error:", chrome.runtime.lastError.message);
+        return;
+      }
+      debugLog("Forwarded to background ✓", response);
+    });
+    
+  } finally {
+    if (DEBUG) console.groupEnd();
+  }
+}
+
+// ============================================
 // POSTMESSAGE LISTENER (Cross-origin detection)
 // ============================================
 
@@ -341,61 +537,72 @@ function setupPostMessageListener() {
       }
       
       debugLog("Origin:", event.origin);
+      debugLog("Data type:", typeof event.data);
+      
+      // 2. Handle Learnosity bridge messages (from injected hook) - PRIORITY
+      if (event.data && (event.data.__canvasExporterBridge === true || 
+                         event.data.__canvasExporterBridgeIncoming === true)) {
+        debugLog("Bridge message signature detected ✓");
+        handleBridgeMessage(event, event.data);
+        return;
+      }
+      
       debugLog("Data:", event.data);
       
-      // 2. Validate origin - only accept messages from instructure.com domains
+      // 3. Validate origin - only accept messages from instructure.com domains
       if (!isAllowedOrigin(event.origin)) {
         debugLog("Ignored – disallowed origin");
         return;
       }
       debugLog("Origin allowed ✓");
       
-      // 3. Skip string messages (some LTI messages come as JSON strings)
+      // 4. Skip string messages (some LTI messages come as JSON strings)
       if (typeof event.data === "string") {
         debugLog("Ignored – string message");
         return;
       }
       
-      // 4. Skip non-object messages
+      // 5. Skip non-object messages
       if (!event.data || typeof event.data !== "object") {
         debugLog("Ignored – non-object message");
         return;
       }
       
-      // 5. Early filter: check if message resembles Learnosity
+      // 6. Early filter: check if message resembles Learnosity
       if (!isLikelyLearnosityMessage(event.data)) {
         debugLog("Message does not resemble Learnosity → skipping early");
         return;
       }
       debugLog("Likely Learnosity message ✓");
       
-      // 6. Extract UUID from multiple potential layers
-      //    Canvas wraps Learnosity messages: event.data.data may contain the actual payload
+      // 7. Extract UUID using bank-specific patterns first (Refinement F)
       let uuid = 
+        extractBankUuidFromObject(event.data) ||
+        extractBankUuidFromObject(event.data?.data) ||
         extractUuidFromObject(event.data) ||
         extractUuidFromObject(event.data?.data) ||
         null;
       
-      // 7. Reject partial UUIDs (must be full 36-char UUID)
+      // 8. Reject partial UUIDs (must be full 36-char UUID)
       if (!uuid || uuid.length < 36) {
         debugLog("No valid UUID found (or partial match) → ignoring");
         return;
       }
       debugLog("Extracted UUID:", uuid);
       
-      // 8. Deduplicate - don't send same UUID twice in a row
+      // 9. Deduplicate - don't send same UUID twice in a row
       if (lastPostMessageBankUuid === uuid) {
         debugLog("Duplicate UUID → ignoring");
         return;
       }
       lastPostMessageBankUuid = uuid;
       
-      // 9. Track in recent banks list (for multi-bank session support)
+      // 10. Track in recent banks list (for multi-bank session support)
       const isNewBank = trackRecentBankUuid(uuid);
       debugLog("New bank in session:", isNewBank);
       debugLog("Recent banks:", recentBankUuids);
       
-      // 10. Forward to background worker
+      // 11. Forward to background worker
       const payload = {
         type: "BANK_CONTEXT_DETECTED",
         source: "postMessage",

@@ -7,10 +7,12 @@
     "cookies",
     "scripting",
     "webRequest",
+    "webNavigation",
     "storage"
   ],
   "host_permissions": [
-    "*://*.instructure.com/*"
+    "*://*.instructure.com/*",
+    "*://*.learnosity.com/*"
   ],
   "background": {
     "service_worker": "background.js",
@@ -22,6 +24,12 @@
       "js": ["content-script.js"],
       "run_at": "document_start",
       "all_frames": true
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["learnosity-hook.js"],
+      "matches": ["*://*.learnosity.com/*"]
     }
   ],
   "action": {
