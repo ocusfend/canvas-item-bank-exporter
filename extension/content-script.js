@@ -1,47 +1,131 @@
 // Canvas New Quizzes Item Bank Exporter - Content Script
-// Phase 3.2 - Pure Canvas-visible signal detection
+// Phase 3.3 - Production-grade detection with all guards
 
 // ============================================
-// DEBUG UTILITIES WITH THROTTLING
-// Refinement #2: Throttle to 50 messages per 5 seconds
+// REFINEMENT #9: SINGLE-LOAD GUARD
+// Prevents duplicate listeners on hot reload
 // ============================================
 
-const DEBUG = true;
+if (window.__CanvasExporterLoaded) {
+  console.log("[CanvasExporter] Already loaded, skipping duplicate init");
+  return;
+}
+window.__CanvasExporterLoaded = true;
+
+// ============================================
+// DEBUG SYSTEM (Dynamic Toggle)
+// Refinement #1: Dynamic DEBUG_ENABLED via storage
+// Refinement #5: Reset counter every 2s for better flow
+// ============================================
+
+let DEBUG_ENABLED = false;
+const DEBUG_MAX = 50;
 let debugCount = 0;
 
-// Reset debug count every 5 seconds to prevent console flooding
-setInterval(() => { debugCount = 0; }, 5000);
+// Load debug preference from storage on init
+chrome.storage.local.get("debug", (result) => {
+  DEBUG_ENABLED = result.debug === true;
+  if (DEBUG_ENABLED) console.log("[CanvasExporter] Debug mode: ON");
+});
+
+// Listen for debug toggle changes from popup
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.debug) {
+    DEBUG_ENABLED = changes.debug.newValue === true;
+    console.log("[CanvasExporter] Debug mode:", DEBUG_ENABLED ? "ON" : "OFF");
+  }
+});
+
+// Refinement #5: Reset every 2s instead of 5s
+setInterval(() => { debugCount = 0; }, 2000);
 
 function debugLog(...args) {
-  if (DEBUG && debugCount < 50) {
+  if (!DEBUG_ENABLED) return;
+  if (debugCount < DEBUG_MAX) {
     debugCount++;
     console.log("[CanvasExporter]", ...args);
   }
 }
 
+// Refinement #1.2: Use groupCollapsed instead of group
 function debugGroup(label, fn) {
-  if (DEBUG && debugCount < 50) {
+  if (!DEBUG_ENABLED) {
+    fn();
+    return;
+  }
+  if (debugCount < DEBUG_MAX) {
     debugCount++;
-    console.group(`[CanvasExporter] ${label}`);
+    console.groupCollapsed(`[CanvasExporter] ${label}`);
     try {
       fn();
     } finally {
       console.groupEnd();
     }
   } else {
-    // Still execute fn, just don't log
     fn();
   }
+}
+
+// ============================================
+// REFINEMENT #17: INTERNAL EVENT EMISSION SYSTEM
+// Centralized event dispatch for future extensibility
+// ============================================
+
+function emit(eventType, detail) {
+  document.dispatchEvent(new CustomEvent("CanvasExporter:" + eventType, { detail }));
+  debugLog(`Event emitted: ${eventType}`, detail);
+}
+
+// ============================================
+// REFINEMENT #14: CONFIRMED-ACTIVE IFRAME MAP (CAIM)
+// Prevents processing ghost/phantom iframes
+// ============================================
+
+const confirmedIframes = new WeakMap();
+
+function verifyIframe(iframe) {
+  if (!confirmedIframes.get(iframe)) {
+    confirmedIframes.set(iframe, true);
+    debugLog("Iframe verified active:", iframe.src || "(no src)");
+  }
+}
+
+function isVerifiedIframe(iframe) {
+  return confirmedIframes.get(iframe) === true;
+}
+
+// ============================================
+// REFINEMENT #15: POSTMESSAGE DEBOUNCER
+// Prevents burst processing during Canvas re-render cycles
+// ============================================
+
+let lastMessageTime = 0;
+
+function shouldDebounceMessage() {
+  const now = performance.now();
+  if (now - lastMessageTime < 25) return true;
+  lastMessageTime = now;
+  return false;
+}
+
+// ============================================
+// REFINEMENT #18: MUTATION LOOP GUARD
+// Prevents responding to thrashing attribute changes
+// ============================================
+
+let lastMutationTime = 0;
+
+function shouldIgnoreMutation() {
+  const now = performance.now();
+  if (now - lastMutationTime < 10) return true;
+  lastMutationTime = now;
+  return false;
 }
 
 // ============================================
 // URL UTILITIES
 // ============================================
 
-/**
- * Check if URL is a quiz-lti URL
- * Refinement #9: try/catch for malformed URLs (blob:, etc.)
- */
 function isQuizLtiUrl(url) {
   try {
     if (!url || url.startsWith("blob:")) return false;
@@ -52,10 +136,6 @@ function isQuizLtiUrl(url) {
   }
 }
 
-/**
- * URL patterns that indicate bank context
- * Refinement #3: Non-greedy patterns for both numeric IDs and UUIDs
- */
 const BANK_URL_PATTERNS = [
   /\/banks\/([^/?#]+)/i,
   /\/bank_entries\/([^/?#]+)/i,
@@ -63,10 +143,6 @@ const BANK_URL_PATTERNS = [
   /\/build\/([0-9]+)/i
 ];
 
-/**
- * Extract bank ID from URL (only for quiz-lti domains)
- * Refinement #3: Require quiz-lti domain to prevent false positives
- */
 function extractBankIdFromQuizLtiUrl(url) {
   if (!url || !url.includes("quiz-lti")) return null;
   
@@ -80,18 +156,12 @@ function extractBankIdFromQuizLtiUrl(url) {
   return null;
 }
 
-/**
- * Safely get the internal iframe URL (contentWindow.location.href)
- * Returns null if cross-origin blocked or iframe not ready
- */
 function getInternalIframeUrl(iframe) {
   try {
     const win = iframe.contentWindow;
     if (!win) return null;
-
     const href = win.location?.href;
     if (!href || href === "about:blank") return null;
-
     return href;
   } catch {
     return null;
@@ -99,17 +169,51 @@ function getInternalIframeUrl(iframe) {
 }
 
 // ============================================
-// MESSAGE CLASSIFICATION
-// Phase 3.2: Unified classifier for Canvas/PMF/Learnosity
+// REFINEMENT #7: SMARTER BANK PAGE DETECTION
+// Prevents premature context reset on non-quiz-lti routes
 // ============================================
 
-/**
- * Classify incoming postMessage by origin type
- * Refinement #1: Unpack nested JSON strings
- * Refinement #4: Guard against null origin
- */
+const BANK_URL_HINTS = [
+  "quiz-lti",
+  "item_banks",
+  "question-banks",
+  "banks"
+];
+
+function isLikelyBankPage(url) {
+  return BANK_URL_HINTS.some(hint => url.includes(hint));
+}
+
+function checkAndResetBankContext() {
+  if (!isLikelyBankPage(window.location.href)) {
+    chrome.storage.session.remove("lastDetectedBank").catch(() => {});
+    debugLog("Bank context cleared - navigated away from bank page");
+  }
+}
+
+// Check on load and on history changes
+checkAndResetBankContext();
+window.addEventListener("popstate", checkAndResetBankContext);
+
+// ============================================
+// REFINEMENT #16: LEARNOSITY FINGERPRINT DETECTION
+// Future-proof against API shape changes
+// ============================================
+
+function hasLearnosityFingerprint(data) {
+  if (!data || typeof data !== "object") return false;
+  const likelyKeys = ["activity_id", "session_id", "user_id", "type", "meta", "resource_id"];
+  const keys = Object.keys(data);
+  const matchCount = keys.filter(k => likelyKeys.includes(k)).length;
+  return matchCount >= 2;
+}
+
+// ============================================
+// MESSAGE CLASSIFICATION
+// Phase 3.3: Enhanced with fingerprinting + anomaly detection
+// ============================================
+
 function classifyMessage(event) {
-  // Refinement #4: Explicitly ignore null origin
   if (event.origin === "null") {
     debugLog("Ignoring null-origin postMessage");
     return null;
@@ -118,7 +222,7 @@ function classifyMessage(event) {
   let data = event.data;
   if (!data || typeof data !== "object") return null;
 
-  // Refinement #1: Unpack nested JSON strings
+  // Unpack nested JSON strings
   if (typeof data.message === "string" && data.message.trim().startsWith("{")) {
     try {
       data._unpacked = JSON.parse(data.message);
@@ -134,18 +238,20 @@ function classifyMessage(event) {
     return null;
   }
 
-  // Canvas origins (strict .endsWith validation)
   const isCanvas = hostname === "instructure.com" || hostname.endsWith(".instructure.com");
-
-  // post_message_forwarding origins (including lrn.io for Learnosity CDN)
   const isPMF = 
     hostname.endsWith(".canvaslms.com") || 
     hostname.endsWith(".cloudfront.net") ||
     hostname.endsWith(".lrn.io");
 
-  // Detect Learnosity-shaped payloads
+  // Enhanced Learnosity detection with fingerprinting
   const hasLearnosityShape = (() => {
     try {
+      // Check fingerprint first (faster)
+      if (hasLearnosityFingerprint(data)) return true;
+      if (hasLearnosityFingerprint(data?.data)) return true;
+      
+      // Fall back to string matching
       const json = JSON.stringify(data);
       return (
         json.includes("learnosity") ||
@@ -159,6 +265,11 @@ function classifyMessage(event) {
     }
   })();
 
+  // Refinement #3: Origin anomaly detector
+  if (DEBUG_ENABLED && !isCanvas && !isPMF && hasLearnosityShape) {
+    console.warn("[CanvasExporter] Suspicious Learnosity-shaped message from unexpected origin:", event.origin);
+  }
+
   return {
     isCanvas,
     isPMF,
@@ -169,18 +280,11 @@ function classifyMessage(event) {
 
 // ============================================
 // UUID EXTRACTION
-// Phase 3.2: Bank-specific patterns with lowercase normalization
 // ============================================
 
-/**
- * Find any UUID deep in an object structure
- * Returns lowercase-normalized UUID
- */
 function findAnyUuidDeep(obj) {
   if (!obj) return null;
-
   const UUID = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
-
   try {
     const json = JSON.stringify(obj);
     const match = json.match(UUID);
@@ -190,10 +294,6 @@ function findAnyUuidDeep(obj) {
   }
 }
 
-/**
- * Find bank-specific UUID using common patterns
- * Returns lowercase-normalized UUID
- */
 function findBankUuid(obj) {
   if (!obj) return null;
   
@@ -218,54 +318,88 @@ function findBankUuid(obj) {
 
 // ============================================
 // STATE MANAGEMENT
-// Phase 3.2: Separate dedupe pools + LRU tracking
+// Phase 3.3: With cleanup utilities
 // ============================================
 
-// Refinement #5: Separate dedupe pools for different signal sources
 let lastIframeUuid = null;
 let lastMessageUuid = null;
-
-// Refinement #6: Debounce for iframe processing
 let lastIframeCheck = 0;
 
-// Refinement #8: LRU Map for recent bank tracking
 const MAX_RECENT_BANKS = 10;
-const recentBanks = new Map();
+let recentBankUuids = [];
 
-// Track iframes for polling
 const iframeLastUrl = new WeakMap();
 const trackedIframes = [];
 
-/**
- * Track recent bank UUID with LRU eviction
- * Returns true if this is a new bank
- */
+// Refinement #2: Clean recent banks (dedupe + cap)
+function cleanRecentBanks() {
+  recentBankUuids = [...new Set(recentBankUuids)].slice(0, MAX_RECENT_BANKS);
+}
+
 function trackRecentBankUuid(uuid) {
-  const isNew = !recentBanks.has(uuid);
+  const isNew = !recentBankUuids.includes(uuid);
   
-  // LRU bump: delete and re-add to move to end
-  if (recentBanks.has(uuid)) {
-    recentBanks.delete(uuid);
-  }
-  recentBanks.set(uuid, Date.now());
+  // Remove if exists (for LRU bump)
+  recentBankUuids = recentBankUuids.filter(u => u !== uuid);
   
-  // Evict oldest entries
-  while (recentBanks.size > MAX_RECENT_BANKS) {
-    const oldest = [...recentBanks.keys()][0];
-    recentBanks.delete(oldest);
-  }
+  // Add to front
+  recentBankUuids.unshift(uuid);
+  
+  // Clean up
+  cleanRecentBanks();
   
   return isNew;
+}
+
+// ============================================
+// SMART POLLING (Refinement #5.2)
+// Only activates when no observations for 3+ seconds
+// ============================================
+
+let lastObservationTime = Date.now();
+let pollingActive = false;
+
+function markObservation() {
+  lastObservationTime = Date.now();
+}
+
+function setupSmartPolling() {
+  setInterval(() => {
+    const timeSinceObservation = Date.now() - lastObservationTime;
+    
+    if (timeSinceObservation < 3000) {
+      if (pollingActive) {
+        debugLog("Polling paused - recent observations detected");
+        pollingActive = false;
+      }
+      return;
+    }
+    
+    if (!pollingActive) {
+      debugLog("Polling activated - no recent observations");
+      pollingActive = true;
+    }
+    
+    trackedIframes.forEach((iframe) => {
+      if (!document.contains(iframe)) return;
+      if (!isVerifiedIframe(iframe)) return;
+      
+      const url = getInternalIframeUrl(iframe);
+      if (!url) return;
+      if (iframeLastUrl.get(iframe) === url) return;
+      
+      debugLog("Polling detected URL change:", url);
+      handleIframeUrlChange(iframe, url);
+    });
+  }, 1000);
+  
+  debugLog("Smart polling initialized (fallback mode)");
 }
 
 // ============================================
 // IFRAME URL DETECTION (Signal A)
 // ============================================
 
-/**
- * Debounced iframe processing (200ms throttle)
- * Refinement #6: Reduces console spam during rapid mutations
- */
 function safeProcessIframe(iframe) {
   const now = Date.now();
   if (now - lastIframeCheck < 200) return;
@@ -273,17 +407,13 @@ function safeProcessIframe(iframe) {
   processIframe(iframe);
 }
 
-/**
- * Handle iframe URL changes and extract bank context
- * Refinement #5: Uses separate dedupe pool for iframe signals
- * Refinement #6: Adds mode field
- */
 function handleIframeUrlChange(iframe, url) {
   if (!url || !isQuizLtiUrl(url)) return;
   
-  // Dedup on exact URL match
   if (iframeLastUrl.get(iframe) === url) return;
   iframeLastUrl.set(iframe, url);
+  
+  markObservation();
   
   debugGroup("Iframe URL change detected", () => {
     debugLog("URL:", url);
@@ -297,7 +427,6 @@ function handleIframeUrlChange(iframe, url) {
     
     debugLog("Extracted UUID:", uuid);
     
-    // Refinement #5: Use separate dedupe pool for iframe signals
     if (lastIframeUuid === uuid) {
       debugLog("Duplicate iframe UUID → ignoring");
       return;
@@ -307,15 +436,18 @@ function handleIframeUrlChange(iframe, url) {
     const isNew = trackRecentBankUuid(uuid);
     debugLog("New bank:", isNew);
     
-    // Refinement #6: Add mode field
-    chrome.runtime.sendMessage({
+    const message = {
       type: "BANK_CONTEXT_DETECTED",
       source: "iframe",
       mode: "url",
       uuid: uuid,
       iframeUrl: url,
       timestamp: Date.now()
-    }, (response) => {
+    };
+    
+    emit("bankDetected", message);
+    
+    chrome.runtime.sendMessage(message, (response) => {
       if (chrome.runtime.lastError) {
         debugLog("Runtime error:", chrome.runtime.lastError.message);
         return;
@@ -325,9 +457,6 @@ function handleIframeUrlChange(iframe, url) {
   });
 }
 
-/**
- * Process an iframe: try internal URL first, fall back to src
- */
 function processIframe(iframe) {
   const internalUrl = getInternalIframeUrl(iframe);
   const currentUrl = internalUrl || iframe.src;
@@ -337,14 +466,8 @@ function processIframe(iframe) {
   }
 }
 
-/**
- * Handle an iframe: track it and attach load listener
- * Refinement #7: 50ms delay for src to stabilize
- */
 function handleIframe(iframe) {
-  if (trackedIframes.includes(iframe)) {
-    return;
-  }
+  if (trackedIframes.includes(iframe)) return;
   
   debugGroup("Iframe detected", () => {
     debugLog("src:", iframe.src || "(empty)");
@@ -352,57 +475,73 @@ function handleIframe(iframe) {
   
   trackedIframes.push(iframe);
   
+  // Verify after a short delay to filter ghost iframes
+  setTimeout(() => {
+    if (document.contains(iframe) && (iframe.src || getInternalIframeUrl(iframe))) {
+      verifyIframe(iframe);
+      markObservation();
+    }
+  }, 100);
+  
   iframe.addEventListener("load", () => {
     debugLog("Iframe load event fired");
-    // Refinement #7: 50ms delay for src to stabilize
+    verifyIframe(iframe);
+    markObservation();
     setTimeout(() => safeProcessIframe(iframe), 50);
   });
   
-  // Refinement #7: 50ms initial delay
-  setTimeout(() => safeProcessIframe(iframe), 50);
+  setTimeout(() => {
+    if (isVerifiedIframe(iframe)) {
+      safeProcessIframe(iframe);
+    }
+  }, 50);
 }
 
-/**
- * Scan DOM for existing iframes
- */
 function scanForIframes() {
   debugGroup("Initial iframe scan", () => {
     const iframes = document.querySelectorAll("iframe");
     debugLog(`Found ${iframes.length} existing iframe(s)`);
-    
-    iframes.forEach((iframe) => {
-      handleIframe(iframe);
-    });
+    iframes.forEach(handleIframe);
   });
 }
 
-/**
- * Setup MutationObserver for dynamic iframe detection
- */
+// ============================================
+// MUTATION OBSERVER
+// Phase 3.3: With micro-optimizations and loop guard
+// ============================================
+
 function setupObserver() {
   const observer = new MutationObserver((mutations) => {
+    if (shouldIgnoreMutation()) return;
+    
     for (const mutation of mutations) {
       try {
-        // Check for added nodes (new iframes)
         if (mutation.type === "childList") {
           mutation.addedNodes.forEach((node) => {
+            // Micro-optimization: skip non-element nodes
+            if (node.nodeType !== Node.ELEMENT_NODE) return;
+            
             if (node.nodeName === "IFRAME") {
               handleIframe(node);
-            }
-            if (node.querySelectorAll) {
-              node.querySelectorAll("iframe").forEach(handleIframe);
+              markObservation();
+            } else if (node.querySelectorAll) {
+              const iframes = node.querySelectorAll("iframe");
+              if (iframes.length > 0) {
+                iframes.forEach(handleIframe);
+                markObservation();
+              }
             }
           });
         }
         
-        // Check for attribute changes on iframes (src changes)
         if (mutation.type === "attributes" && mutation.target.nodeName === "IFRAME") {
           const iframe = mutation.target;
           debugLog("Iframe attribute changed:", mutation.attributeName);
+          markObservation();
           setTimeout(() => safeProcessIframe(iframe), 50);
         }
       } catch (err) {
-        debugLog("Observer error:", err);
+        console.error("[CanvasExporter] Observer error:", err);
       }
     }
   });
@@ -417,46 +556,29 @@ function setupObserver() {
   debugLog("MutationObserver started");
 }
 
-/**
- * Setup polling to detect internal iframe navigation (SPA changes)
- */
-function setupPolling() {
-  setInterval(() => {
-    trackedIframes.forEach((iframe) => {
-      if (!document.contains(iframe)) return;
-      
-      const url = getInternalIframeUrl(iframe);
-      if (!url) return;
-      
-      if (iframeLastUrl.get(iframe) === url) return;
-      
-      debugLog("Polling detected URL change:", url);
-      handleIframeUrlChange(iframe, url);
-    });
-  }, 1000);
-  
-  debugLog("Polling started (1s interval)");
-}
-
 // ============================================
 // POSTMESSAGE LISTENER (Signals B & C)
-// Phase 3.2: Unified router with classifier
+// Phase 3.3: With debouncer and fingerprinting
 // ============================================
 
 function setupPostMessageListener() {
   window.addEventListener("message", (event) => {
-    if (DEBUG && debugCount < 50) {
+    // Refinement #15: Debounce burst messages
+    if (shouldDebounceMessage()) {
+      debugLog("Debounced postMessage burst");
+      return;
+    }
+    
+    if (DEBUG_ENABLED && debugCount < DEBUG_MAX) {
       console.groupCollapsed("[CanvasExporter] postMessage received");
     }
     
     try {
-      // Ignore self-messages from top window
       if (event.source === window && window.top === window) {
         debugLog("Ignoring top-window self-message");
         return;
       }
       
-      // Classify the message
       const m = classifyMessage(event);
       
       if (!m) {
@@ -469,7 +591,6 @@ function setupPostMessageListener() {
       debugLog("Is PMF:", m.isPMF);
       debugLog("Has Learnosity shape:", m.hasLearnosityShape);
       
-      // Only accept Canvas or PMF origins
       if (!m.isCanvas && !m.isPMF) {
         debugLog("Ignoring – unknown or untrusted origin");
         return;
@@ -477,7 +598,6 @@ function setupPostMessageListener() {
       
       const payload = m.data;
       
-      // Refinement #1: Check _unpacked payload too
       const uuid = 
         findBankUuid(payload) ||
         findBankUuid(payload?.data) ||
@@ -491,19 +611,19 @@ function setupPostMessageListener() {
       
       debugLog("Extracted UUID:", uuid);
       
-      // Refinement #5: Use separate dedupe pool for message signals
       if (lastMessageUuid === uuid) {
         debugLog("Duplicate message UUID → ignoring");
         return;
       }
       lastMessageUuid = uuid;
       
+      markObservation();
+      
       const isNew = trackRecentBankUuid(uuid);
       debugLog("New bank:", isNew);
-      debugLog("Recent banks:", [...recentBanks.keys()]);
+      debugLog("Recent banks:", recentBankUuids);
       
-      // Refinement #6: Add mode field
-      chrome.runtime.sendMessage({
+      const message = {
         type: "BANK_CONTEXT_DETECTED",
         source: m.isPMF ? "pmf" : "postMessage",
         mode: "payload",
@@ -511,7 +631,11 @@ function setupPostMessageListener() {
         origin: event.origin,
         rawMessage: payload,
         timestamp: Date.now()
-      }, (res) => {
+      };
+      
+      emit("bankDetected", message);
+      
+      chrome.runtime.sendMessage(message, (res) => {
         if (chrome.runtime.lastError) {
           debugLog("Runtime error:", chrome.runtime.lastError.message);
         } else {
@@ -520,30 +644,31 @@ function setupPostMessageListener() {
       });
       
     } finally {
-      if (DEBUG && debugCount < 50) {
+      if (DEBUG_ENABLED && debugCount < DEBUG_MAX) {
         console.groupEnd();
       }
     }
   });
   
-  debugLog("postMessage listener started (Phase 3.2)");
+  debugLog("postMessage listener started (Phase 3.3)");
 }
 
 // ============================================
 // INITIALIZATION
+// Refinement #6: Delayed start for Canvas hydration
 // ============================================
 
-debugLog("Content script loaded on:", window.location.href);
-debugLog("Phase 3.2 - Pure Canvas-visible signal detection");
+console.log("[CanvasExporter] Content script loaded (Phase 3.3)");
 
 // Setup postMessage listener FIRST to catch early messages
 setupPostMessageListener();
 
-// Initial scan for existing iframes
-scanForIframes();
+// Refinement #6: Delay observer and polling for Canvas hydration
+setTimeout(() => {
+  scanForIframes();
+  setupObserver();
+}, 75);
 
-// Setup MutationObserver for dynamic detection
-setupObserver();
-
-// Setup polling for internal iframe navigation
-setupPolling();
+setTimeout(() => {
+  setupSmartPolling();
+}, 150);
