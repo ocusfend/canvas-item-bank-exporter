@@ -1,18 +1,15 @@
 {
   "name": "Canvas New Quizzes Item Bank Exporter",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "manifest_version": 3,
   "description": "Export New Quizzes item banks directly from Canvas",
   "permissions": [
     "cookies",
-    "scripting",
     "webRequest",
-    "webNavigation",
     "storage"
   ],
   "host_permissions": [
-    "*://*.instructure.com/*",
-    "*://*.learnosity.com/*"
+    "*://*.instructure.com/*"
   ],
   "background": {
     "service_worker": "background.js",
@@ -24,12 +21,6 @@
       "js": ["content-script.js"],
       "run_at": "document_start",
       "all_frames": true
-    }
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": ["learnosity-hook.js"],
-      "matches": ["*://*.learnosity.com/*"]
     }
   ],
   "action": {
