@@ -39,14 +39,20 @@ export function isQuizLtiUrl(url) {
 }
 
 /**
- * Extract bank UUID from URL using path-specific patterns
- * Matches: /api/banks/<UUID>, /banks/<UUID>, /bank/<UUID>
+ * Extract bank ID from URL using path-specific patterns
+ * Supports both UUID format and numeric IDs (e.g., /banks/3387)
+ * Matches: /api/banks/<ID>, /banks/<ID>, /bank/<ID>
  */
-export function extractBankUuidFromUrl(url) {
+export function extractBankIdFromUrl(url) {
   const patterns = [
+    // UUID patterns
     /\/api\/banks\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
     /\/banks\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
-    /\/bank\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i
+    /\/bank\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
+    // Numeric ID patterns (e.g., /banks/3387)
+    /\/api\/banks\/(\d+)/i,
+    /\/banks\/(\d+)/i,
+    /\/bank\/(\d+)/i
   ];
   
   for (const pattern of patterns) {
@@ -56,3 +62,6 @@ export function extractBankUuidFromUrl(url) {
   
   return null;
 }
+
+// Keep old name as alias for backwards compatibility
+export const extractBankUuidFromUrl = extractBankIdFromUrl;

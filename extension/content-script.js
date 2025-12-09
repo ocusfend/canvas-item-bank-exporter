@@ -32,11 +32,19 @@ function isQuizLtiUrl(url) {
   }
 }
 
-function extractBankUuidFromUrl(url) {
+/**
+ * Extract bank ID from URL - supports both UUID and numeric IDs
+ */
+function extractBankIdFromUrl(url) {
   const patterns = [
+    // UUID patterns
     /\/api\/banks\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
     /\/banks\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
-    /\/bank\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i
+    /\/bank\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
+    // Numeric ID patterns (e.g., /banks/3387)
+    /\/api\/banks\/(\d+)/i,
+    /\/banks\/(\d+)/i,
+    /\/bank\/(\d+)/i
   ];
   
   for (const pattern of patterns) {
@@ -47,50 +55,64 @@ function extractBankUuidFromUrl(url) {
   return null;
 }
 
+/**
+ * Safely get the internal iframe URL (contentWindow.location.href)
+ * Returns null if cross-origin blocked or iframe not ready
+ */
+function getInternalIframeUrl(iframe) {
+  try {
+    const win = iframe.contentWindow;
+    if (!win) return null;
+
+    const href = win.location?.href;
+    if (!href || href === "about:blank") return null;
+
+    return href;
+  } catch {
+    // Cross-origin access blocked - expected until iframe fully loads
+    return null;
+  }
+}
+
 // ============================================
 // STATE MANAGEMENT
 // ============================================
 
-let lastSentBankUuid = null;
-const observedIframes = new WeakSet();
+let lastSentBankId = null;
 const iframeLastUrl = new WeakMap();
+// Use array to track iframes (WeakSet can't be iterated for polling)
+const trackedIframes = [];
 
 // ============================================
 // CORE FUNCTIONS
 // ============================================
 
 /**
- * Process an iframe: extract URL/UUID, deduplicate, send message
+ * Process an iframe URL change: extract ID, deduplicate, send message
  */
-function processIframe(iframe) {
-  const currentUrl = iframe.src;
+function handleIframeUrlChange(iframe, url) {
+  if (!url || !isQuizLtiUrl(url)) return;
   
-  if (!currentUrl || !isQuizLtiUrl(currentUrl)) {
-    return;
-  }
+  // Dedup on exact URL match
+  if (iframeLastUrl.get(iframe) === url) return;
+  iframeLastUrl.set(iframe, url);
   
-  // Dedup on exact URL match (allows same UUID with different paths)
-  if (iframeLastUrl.get(iframe) === currentUrl) {
-    return;
-  }
+  const bankId = extractBankIdFromUrl(url);
   
-  debugGroup("Processing iframe", () => {
-    debugLog("URL:", currentUrl);
+  debugGroup("Iframe URL change detected", () => {
+    debugLog("URL:", url);
+    debugLog("Extracted bank ID:", bankId || "(none)");
     
-    const bankUuid = extractBankUuidFromUrl(currentUrl);
-    debugLog("Extracted UUID:", bankUuid || "(none)");
-    
-    // Update tracking state
-    iframeLastUrl.set(iframe, currentUrl);
-    if (bankUuid) {
-      lastSentBankUuid = bankUuid;
+    // Update last sent ID
+    if (bankId) {
+      lastSentBankId = bankId;
     }
     
-    // Send message to background with try/catch
+    // Send message to background
     const payload = {
       type: "BANK_CONTEXT_DETECTED",
-      iframeUrl: currentUrl,
-      bankUuid: bankUuid,
+      iframeUrl: url,
+      bankUuid: bankId, // Keep property name for backwards compatibility
       timestamp: Date.now()
     };
     
@@ -103,42 +125,47 @@ function processIframe(iframe) {
 }
 
 /**
- * Handle an iframe: attach load listener if not already observed
+ * Process an iframe: try internal URL first, fall back to src
  */
-function handleIframe(iframe) {
-  if (observedIframes.has(iframe)) {
-    return;
-  }
+function processIframe(iframe) {
+  const internalUrl = getInternalIframeUrl(iframe);
+  const currentUrl = internalUrl || iframe.src;
   
-  const src = iframe.src;
-  if (!src || !isQuizLtiUrl(src)) {
-    return;
-  }
-  
-  debugGroup("Iframe detected", () => {
-    debugLog("URL:", src);
-    debugLog("Is quiz-lti:", true);
-    debugLog("Attaching load listener");
-  });
-  
-  observedIframes.add(iframe);
-  
-  // Attach load listener for future loads
-  iframe.addEventListener("load", () => {
-    debugLog("Iframe load event fired");
-    processIframe(iframe);
-  });
-  
-  // Handle already-loaded iframes (Refinement 7)
-  // Check if iframe is already loaded
-  if (iframe.contentDocument || iframe.src) {
-    debugLog("Iframe may already be loaded, processing immediately");
-    setTimeout(() => processIframe(iframe), 0);
+  if (currentUrl) {
+    handleIframeUrlChange(iframe, currentUrl);
   }
 }
 
 /**
- * Scan DOM for existing quiz-lti iframes
+ * Handle an iframe: track it and attach load listener
+ */
+function handleIframe(iframe) {
+  // Check if already tracked
+  if (trackedIframes.includes(iframe)) {
+    return;
+  }
+  
+  debugGroup("Iframe detected", () => {
+    debugLog("src:", iframe.src || "(empty)");
+    debugLog("Tracking iframe for internal URL detection");
+  });
+  
+  // Track this iframe
+  trackedIframes.push(iframe);
+  
+  // Attach load listener for future loads
+  iframe.addEventListener("load", () => {
+    debugLog("Iframe load event fired");
+    // Small delay to allow internal navigation to complete
+    setTimeout(() => processIframe(iframe), 100);
+  });
+  
+  // Process immediately in case already loaded
+  setTimeout(() => processIframe(iframe), 0);
+}
+
+/**
+ * Scan DOM for existing iframes (observe ALL iframes, filter by internal URL)
  */
 function scanForIframes() {
   debugGroup("Initial iframe scan", () => {
@@ -146,10 +173,7 @@ function scanForIframes() {
     debugLog(`Found ${iframes.length} existing iframe(s)`);
     
     iframes.forEach((iframe) => {
-      if (iframe.src && isQuizLtiUrl(iframe.src)) {
-        debugLog("Quiz-LTI iframe found:", iframe.src);
-        handleIframe(iframe);
-      }
+      handleIframe(iframe);
     });
   });
 }
@@ -176,11 +200,9 @@ function setupObserver() {
       // Check for attribute changes on iframes (src changes)
       if (mutation.type === "attributes" && mutation.target.nodeName === "IFRAME") {
         const iframe = mutation.target;
-        if (iframe.src && isQuizLtiUrl(iframe.src)) {
-          debugLog("Iframe src attribute changed:", iframe.src);
-          handleIframe(iframe);
-          processIframe(iframe);
-        }
+        debugLog("Iframe attribute changed:", mutation.attributeName);
+        // Process after attribute change
+        setTimeout(() => processIframe(iframe), 100);
       }
     }
   });
@@ -196,25 +218,26 @@ function setupObserver() {
 }
 
 /**
- * Setup polling as a safety net for iframe.src changes
- * (Catches changes that MutationObserver might miss)
+ * Setup polling to detect internal iframe navigation (SPA changes)
  */
 function setupPolling() {
   setInterval(() => {
-    const iframes = document.querySelectorAll("iframe");
-    iframes.forEach((iframe) => {
-      if (iframe.src && isQuizLtiUrl(iframe.src)) {
-        // Only process if we're already tracking this iframe
-        if (observedIframes.has(iframe)) {
-          processIframe(iframe);
-        } else {
-          handleIframe(iframe);
-        }
-      }
+    trackedIframes.forEach((iframe) => {
+      // Skip if iframe was removed from DOM
+      if (!document.contains(iframe)) return;
+      
+      const url = getInternalIframeUrl(iframe);
+      if (!url) return;
+      
+      // Check if URL changed since last poll
+      if (iframeLastUrl.get(iframe) === url) return;
+      
+      debugLog("Polling detected URL change:", url);
+      handleIframeUrlChange(iframe, url);
     });
   }, 1000);
   
-  debugLog("Polling safety net started (1s interval)");
+  debugLog("Polling started (1s interval for internal URL changes)");
 }
 
 // ============================================
@@ -229,5 +252,5 @@ scanForIframes();
 // Setup MutationObserver for dynamic detection
 setupObserver();
 
-// Setup polling as safety net
+// Setup polling for internal iframe navigation
 setupPolling();
