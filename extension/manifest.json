@@ -6,7 +6,8 @@
   "permissions": [
     "cookies",
     "scripting",
-    "webRequest"
+    "webRequest",
+    "storage"
   ],
   "host_permissions": [
     "*://*.instructure.com/*",
