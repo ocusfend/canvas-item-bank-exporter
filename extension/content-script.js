@@ -184,25 +184,29 @@ function scanForIframes() {
 function setupObserver() {
   const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
-      // Check for added nodes (new iframes)
-      if (mutation.type === "childList") {
-        mutation.addedNodes.forEach((node) => {
-          if (node.nodeName === "IFRAME") {
-            handleIframe(node);
-          }
-          // Also check children of added nodes
-          if (node.querySelectorAll) {
-            node.querySelectorAll("iframe").forEach(handleIframe);
-          }
-        });
-      }
-      
-      // Check for attribute changes on iframes (src changes)
-      if (mutation.type === "attributes" && mutation.target.nodeName === "IFRAME") {
-        const iframe = mutation.target;
-        debugLog("Iframe attribute changed:", mutation.attributeName);
-        // Process after attribute change
-        setTimeout(() => processIframe(iframe), 100);
+      try {
+        // Check for added nodes (new iframes)
+        if (mutation.type === "childList") {
+          mutation.addedNodes.forEach((node) => {
+            if (node.nodeName === "IFRAME") {
+              handleIframe(node);
+            }
+            // Also check children of added nodes
+            if (node.querySelectorAll) {
+              node.querySelectorAll("iframe").forEach(handleIframe);
+            }
+          });
+        }
+        
+        // Check for attribute changes on iframes (src changes)
+        if (mutation.type === "attributes" && mutation.target.nodeName === "IFRAME") {
+          const iframe = mutation.target;
+          debugLog("Iframe attribute changed:", mutation.attributeName);
+          // Process after attribute change
+          setTimeout(() => processIframe(iframe), 100);
+        }
+      } catch (err) {
+        debugLog("Observer error:", err);
       }
     }
   });
