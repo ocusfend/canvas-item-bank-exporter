@@ -1,0 +1,39 @@
+{
+  "name": "Canvas New Quizzes Item Bank Exporter",
+  "version": "0.1.0",
+  "manifest_version": 3,
+  "description": "Export New Quizzes item banks directly from Canvas",
+  "permissions": [
+    "cookies",
+    "scripting",
+    "webRequest"
+  ],
+  "host_permissions": [
+    "*://*.instructure.com/*",
+    "*://*.quiz-lti-*.instructure.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.instructure.com/*"],
+      "js": ["content-script.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/16.png",
+      "48": "icons/48.png",
+      "128": "icons/128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/16.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  }
+}
