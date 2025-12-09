@@ -75,6 +75,63 @@ function getInternalIframeUrl(iframe) {
 }
 
 // ============================================
+// POSTMESSAGE ORIGIN VALIDATION
+// ============================================
+
+const ALLOWED_ORIGIN_PATTERNS = [
+  /\.instructure\.com$/,
+  /quiz-lti.*\.instructure\.com$/
+];
+
+function isAllowedOrigin(origin) {
+  try {
+    const { hostname } = new URL(origin);
+    return ALLOWED_ORIGIN_PATTERNS.some(pattern => pattern.test(hostname));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if message likely comes from Learnosity/Canvas LTI
+ * Reduces noise from Canvas UI messages (resize, analytics, routing)
+ */
+function isLikelyLearnosityMessage(data) {
+  if (!data || typeof data !== "object") return false;
+  
+  // Learnosity messages typically include one of these properties
+  return !!(
+    data.subject ||           // LTI message subject
+    data.data ||              // Canvas-wrapped payload
+    data.resource_id ||       // Learnosity resource identifier
+    data.session_id ||        // Learnosity session
+    data.bankId ||            // Direct bank ID
+    data.bank_id              // Alternative format
+  );
+}
+
+/**
+ * Extract first UUID found anywhere in an object (via JSON serialization)
+ * Returns null for circular objects or non-serializable data
+ */
+function extractUuidFromObject(obj) {
+  if (!obj || typeof obj !== "object") return null;
+  
+  const uuidRegex = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+  
+  let json;
+  try {
+    json = JSON.stringify(obj);
+  } catch {
+    // Cannot extract UUID from circular or non-serializable object
+    return null;
+  }
+  
+  const match = json.match(uuidRegex);
+  return match ? match[1] : null;
+}
+
+// ============================================
 // STATE MANAGEMENT
 // ============================================
 
@@ -82,6 +139,30 @@ let lastSentBankId = null;
 const iframeLastUrl = new WeakMap();
 // Use array to track iframes (WeakSet can't be iterated for polling)
 const trackedIframes = [];
+
+// postMessage deduplication
+let lastPostMessageBankUuid = null;
+
+// Store last 5 unique bank UUIDs for multi-bank session support
+const recentBankUuids = [];
+const MAX_RECENT_BANKS = 5;
+
+/**
+ * Track a bank UUID in the recent list (max 5)
+ * Returns true if this is a new UUID, false if already seen
+ */
+function trackRecentBankUuid(uuid) {
+  if (recentBankUuids.includes(uuid)) {
+    return false; // Already tracked
+  }
+  
+  recentBankUuids.unshift(uuid); // Add to front
+  if (recentBankUuids.length > MAX_RECENT_BANKS) {
+    recentBankUuids.pop(); // Remove oldest
+  }
+  
+  return true; // New UUID
+}
 
 // ============================================
 // CORE FUNCTIONS
@@ -245,10 +326,110 @@ function setupPolling() {
 }
 
 // ============================================
+// POSTMESSAGE LISTENER (Cross-origin detection)
+// ============================================
+
+function setupPostMessageListener() {
+  window.addEventListener("message", (event) => {
+    if (DEBUG) console.groupCollapsed("[CanvasExporter] postMessage received");
+    
+    try {
+      // 1. Ignore top-window self-messages (prevent extension loops)
+      if (event.source === window && window.top === window) {
+        debugLog("Ignoring top-window self-message");
+        return;
+      }
+      
+      debugLog("Origin:", event.origin);
+      debugLog("Data:", event.data);
+      
+      // 2. Validate origin - only accept messages from instructure.com domains
+      if (!isAllowedOrigin(event.origin)) {
+        debugLog("Ignored – disallowed origin");
+        return;
+      }
+      debugLog("Origin allowed ✓");
+      
+      // 3. Skip string messages (some LTI messages come as JSON strings)
+      if (typeof event.data === "string") {
+        debugLog("Ignored – string message");
+        return;
+      }
+      
+      // 4. Skip non-object messages
+      if (!event.data || typeof event.data !== "object") {
+        debugLog("Ignored – non-object message");
+        return;
+      }
+      
+      // 5. Early filter: check if message resembles Learnosity
+      if (!isLikelyLearnosityMessage(event.data)) {
+        debugLog("Message does not resemble Learnosity → skipping early");
+        return;
+      }
+      debugLog("Likely Learnosity message ✓");
+      
+      // 6. Extract UUID from multiple potential layers
+      //    Canvas wraps Learnosity messages: event.data.data may contain the actual payload
+      let uuid = 
+        extractUuidFromObject(event.data) ||
+        extractUuidFromObject(event.data?.data) ||
+        null;
+      
+      // 7. Reject partial UUIDs (must be full 36-char UUID)
+      if (!uuid || uuid.length < 36) {
+        debugLog("No valid UUID found (or partial match) → ignoring");
+        return;
+      }
+      debugLog("Extracted UUID:", uuid);
+      
+      // 8. Deduplicate - don't send same UUID twice in a row
+      if (lastPostMessageBankUuid === uuid) {
+        debugLog("Duplicate UUID → ignoring");
+        return;
+      }
+      lastPostMessageBankUuid = uuid;
+      
+      // 9. Track in recent banks list (for multi-bank session support)
+      const isNewBank = trackRecentBankUuid(uuid);
+      debugLog("New bank in session:", isNewBank);
+      debugLog("Recent banks:", recentBankUuids);
+      
+      // 10. Forward to background worker
+      const payload = {
+        type: "BANK_CONTEXT_DETECTED",
+        source: "postMessage",
+        bankUuid: uuid,
+        origin: event.origin,
+        rawMessage: event.data,
+        timestamp: Date.now()
+      };
+      
+      chrome.runtime.sendMessage(payload, (response) => {
+        // Check for runtime errors
+        if (chrome.runtime.lastError) {
+          debugLog("Runtime error:", chrome.runtime.lastError.message);
+          return;
+        }
+        debugLog("Forwarded to background ✓", response);
+      });
+      
+    } finally {
+      if (DEBUG) console.groupEnd();
+    }
+  });
+  
+  debugLog("postMessage listener started");
+}
+
+// ============================================
 // INITIALIZATION
 // ============================================
 
 debugLog("Content script loaded on:", window.location.href);
+
+// Setup postMessage listener FIRST to catch early Learnosity boot messages
+setupPostMessageListener();
 
 // Initial scan for existing iframes
 scanForIframes();
