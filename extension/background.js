@@ -14,11 +14,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   
-  // Handle bank context detection (Phase 2)
+  // Handle bank context detection (Phase 2 & 3)
   if (message.type === "BANK_CONTEXT_DETECTED") {
-    console.log("[CanvasExporter] Bank context detected:", message);
+    // Use grouped logging for clarity
+    console.groupCollapsed("[CanvasExporter] BANK_CONTEXT_DETECTED received");
+    console.log("Bank UUID:", message.bankUuid);
+    console.log("Source:", message.source || "iframe");
+    console.log("Origin:", message.origin || "(not provided)");
+    console.log("Timestamp:", new Date(message.timestamp).toISOString());
+    if (message.rawMessage) {
+      console.log("Raw message:", message.rawMessage);
+    }
+    if (message.iframeUrl) {
+      console.log("Iframe URL:", message.iframeUrl);
+    }
+    console.groupEnd();
     
-    // Store in session storage for future fetch operations (Phase 3)
+    // Store in session storage for future fetch operations
     chrome.storage.session.set({ lastDetectedBank: message })
       .then(() => {
         console.log("[CanvasExporter] Bank context stored in session storage");
