@@ -1,9 +1,12 @@
 (function () {
   console.log("[CanvasExporter] Initialization starting…");
 
-  // ------------------------------------------------------
-  //  Detect whether we are inside the Canvas tool iframe
-  // ------------------------------------------------------
+  // Global state for API base detection
+  window.CanvasExporter_Global = window.CanvasExporter_Global || {
+    apiBase: null,
+    detectedBankId: null
+  };
+
   const isToolIframe = window.frameElement && window.location.href.includes("/external_tools/");
 
   if (!isToolIframe) {
@@ -14,23 +17,43 @@
 
   let detectedBank = null;
   let lastSent = null;
+  let lastSentApiBase = null;
 
   function sendBank(bank) {
     if (!bank) return;
-    if (lastSent && lastSent.id === bank.id) return; // avoid spam
+    if (lastSent && lastSent.id === bank.id) return;
     lastSent = bank;
 
-    console.log("[CanvasExporter] Bank detected:", bank);
+    console.log("%c[CanvasExporter] Bank detected:", "color:#9c27b0;font-weight:bold", bank);
 
     window.dispatchEvent(new CustomEvent("CanvasExporter_BankDetected", { detail: bank }));
   }
 
-  function tryParseBank(url) {
-    // Match /api/banks/{id}
-    const bankMatch = url.match(/\/api\/banks\/(\d+)/);
-    if (bankMatch) return { id: Number(bankMatch[1]) };
+  function emitApiBase(apiBase) {
+    // Normalize trailing slash
+    const normalizedBase = apiBase.endsWith('/') ? apiBase : apiBase + '/';
+    
+    if (lastSentApiBase === normalizedBase) return;
+    lastSentApiBase = normalizedBase;
+    window.CanvasExporter_Global.apiBase = normalizedBase;
+    
+    console.log("%c[CanvasExporter] API base detected:", "color:#ff9800;font-weight:bold", normalizedBase);
+    
+    window.dispatchEvent(new CustomEvent("CanvasExporter_ApiBaseDetected", { 
+      detail: { apiBase: normalizedBase } 
+    }));
+  }
 
-    // Match shared_banks?entity_id=<id>
+  function tryParseBank(url) {
+    // Dynamic API base extraction - handles all regional variants
+    // Matches: /api/banks/123, /quiz-lti-eu-prod/api/banks/123, /learnosity_proxy/api/banks/123
+    const apiBaseMatch = url.match(/(.*\/api\/?)banks\/(\d+)/);
+    if (apiBaseMatch) {
+      emitApiBase(apiBaseMatch[1]);
+      return { id: Number(apiBaseMatch[2]) };
+    }
+
+    // Fallback: shared_banks pattern
     const sharedMatch = url.match(/shared_banks.*entity_id=(\d+)/);
     if (sharedMatch) return { id: Number(sharedMatch[1]) };
 
@@ -73,7 +96,6 @@
   }
 
   if (isToolIframe) {
-    // Mutation observer for UI-based detection
     safeObserve(document.body, () => {
       const el = document.querySelector("[data-testid='item-bank-title'], h1");
       if (el) {
@@ -85,5 +107,5 @@
     console.log("[CanvasExporter] MutationObserver running");
   }
 
-  console.log("[CanvasExporter] Phase 3.4 page script active");
+  console.log("[CanvasExporter] Phase 4 page script active");
 })();
