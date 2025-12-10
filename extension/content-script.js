@@ -22,6 +22,16 @@ window.addEventListener("CanvasExporter_ApiBaseDetected", (e) => {
   });
 });
 
+// Listen for auth header detection from inject.js
+window.addEventListener("CanvasExporter_AuthDetected", (e) => {
+  console.log("[CanvasExporter] Forwarding auth to background:", e.detail.apiDomain);
+  chrome.runtime.sendMessage({
+    type: "AUTH_DETECTED",
+    authorization: e.detail.authorization,
+    apiDomain: e.detail.apiDomain,
+  });
+});
+
 // ========== API PROXY VIA PAGE CONTEXT ==========
 // Route API calls through inject.js (page context) to bypass CORS
 
