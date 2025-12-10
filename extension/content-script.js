@@ -87,31 +87,42 @@ window.addEventListener("CanvasExporter_FetchResponse", (e) => {
 
 // ========== MESSAGE HANDLERS FOR BACKGROUND SCRIPT ==========
 
+// Track if this frame has responded to prevent duplicate responses
+let hasRespondedToRequest = new Set();
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  // Only handle FETCH messages from the TOP frame to prevent duplicate requests
-  // When all_frames: true, every iframe's content script receives the message
-  // We only want one response, so we ignore iframes for fetch operations
+  // Handle FETCH messages - ALL frames can respond, but only the one with tokens will
+  // The page context (inject.js) will check if it has tokens before responding
   if (msg.type === "FETCH_API" || msg.type === "FETCH_PAGINATED") {
-    if (window !== window.top) {
-      console.log("[CanvasExporter] Ignoring fetch request in iframe");
-      return false; // Don't handle in iframes
+    const requestKey = `${msg.type}:${msg.url}`;
+    
+    // Prevent this frame from responding twice to the same request
+    if (hasRespondedToRequest.has(requestKey)) {
+      console.log("[CanvasExporter] Already handled this request, skipping");
+      return false;
     }
-  }
-  
-  if (msg.type === "FETCH_API") {
-    console.log("[CanvasExporter] FETCH_API request (top frame):", msg.url);
-    fetchViaPage(msg.url, false)
-      .then(data => sendResponse({ success: true, data }))
-      .catch(error => sendResponse({ success: false, error: error.message }));
+    
+    const isTopFrame = window === window.top;
+    console.log(`[CanvasExporter] ${msg.type} request (${isTopFrame ? 'top' : 'iframe'}):`, msg.url.substring(0, 80));
+    
+    // Route through page context - inject.js will check if it has tokens
+    fetchViaPage(msg.url, msg.type === "FETCH_PAGINATED")
+      .then(data => {
+        hasRespondedToRequest.add(requestKey);
+        // Clear after 5 seconds to allow retries
+        setTimeout(() => hasRespondedToRequest.delete(requestKey), 5000);
+        sendResponse({ success: true, data });
+      })
+      .catch(error => {
+        // Only send error response if we're the top frame (fallback)
+        // Iframes should silently fail to let other frames try
+        if (isTopFrame || error.message.includes('TOKEN_EXPIRED')) {
+          hasRespondedToRequest.add(requestKey);
+          setTimeout(() => hasRespondedToRequest.delete(requestKey), 5000);
+          sendResponse({ success: false, error: error.message });
+        }
+      });
     return true; // Keep channel open for async response
-  }
-  
-  if (msg.type === "FETCH_PAGINATED") {
-    console.log("[CanvasExporter] FETCH_PAGINATED request (top frame):", msg.url);
-    fetchViaPage(msg.url, true)
-      .then(data => sendResponse({ success: true, data }))
-      .catch(error => sendResponse({ success: false, error: error.message }));
-    return true;
   }
 });
 

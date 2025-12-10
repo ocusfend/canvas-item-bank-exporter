@@ -94,105 +94,71 @@ function findTokenForUrl(url) {
   return null;
 }
 
-// ========== DIRECT API FETCH (Using background's stored tokens) ==========
-async function directApiFetch(url) {
-  const token = findTokenForUrl(url);
-  
-  if (!token) {
-    throw new Error('TOKEN_EXPIRED: No valid authentication token available');
-  }
-  
-  debugLog("FETCH", `Direct fetch: ${url.substring(0, 80)}...`);
-  
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-      'Accept': 'application/json',
-      'Authorization': `Bearer ${token}`
-    },
-    mode: 'cors',
-    credentials: 'omit'
-  });
-  
-  if (response.status === 401 || response.status === 403) {
-    throw new Error('TOKEN_EXPIRED: Authentication failed');
-  }
-  
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-  }
-  
-  return response.json();
-}
+// ========== PAGE CONTEXT API FETCH (Routes through content script to page context) ==========
+// This uses the page's authenticated session and cookies - bypassing CORS issues
 
-async function directPaginatedFetch(url) {
-  const allResults = [];
-  let currentUrl = url;
-  let pageCount = 0;
-  const MAX_PAGES = 50;
+async function apiFetchViaTab(tabId, url) {
+  debugLog("FETCH", `Page context fetch: ${url.substring(0, 80)}...`);
   
-  while (currentUrl && pageCount < MAX_PAGES) {
-    pageCount++;
-    debugLog("PAGE", `Fetching page ${pageCount}: ${currentUrl.substring(0, 60)}...`);
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error('Request timed out after 30s'));
+    }, 30000);
     
-    const token = findTokenForUrl(currentUrl);
-    if (!token) {
-      throw new Error('TOKEN_EXPIRED: No valid authentication token available');
-    }
-    
-    const response = await fetch(currentUrl, {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      mode: 'cors',
-      credentials: 'omit'
-    });
-    
-    if (response.status === 401 || response.status === 403) {
-      throw new Error('TOKEN_EXPIRED: Authentication failed');
-    }
-    
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-    
-    const data = await response.json();
-    
-    // Handle array response
-    if (Array.isArray(data)) {
-      allResults.push(...data);
-    } else if (data.data && Array.isArray(data.data)) {
-      allResults.push(...data.data);
-    } else if (data.items && Array.isArray(data.items)) {
-      allResults.push(...data.items);
-    } else {
-      allResults.push(data);
-    }
-    
-    // Check for next page in Link header
-    const linkHeader = response.headers.get('Link');
-    currentUrl = null;
-    
-    if (linkHeader) {
-      const nextMatch = linkHeader.match(/<([^>]+)>;\s*rel="next"/);
-      if (nextMatch) {
-        currentUrl = nextMatch[1];
+    chrome.tabs.sendMessage(tabId, { type: "FETCH_API", url }, (response) => {
+      clearTimeout(timeout);
+      
+      if (chrome.runtime.lastError) {
+        reject(new Error(`Tab communication failed: ${chrome.runtime.lastError.message}`));
+        return;
       }
-    }
-    
-    // Also check for next in response body
-    if (!currentUrl && data.meta?.next) {
-      currentUrl = data.meta.next;
-    }
-  }
-  
-  debugLog("PAGE", `Pagination complete: ${allResults.length} total items from ${pageCount} pages`);
-  return allResults;
+      
+      if (!response) {
+        reject(new Error('No response from content script'));
+        return;
+      }
+      
+      if (response.success) {
+        resolve(response.data);
+      } else {
+        reject(new Error(response.error || 'Unknown error'));
+      }
+    });
+  });
 }
 
-async function trySequentialDirect(fetchers) {
+async function paginatedFetchViaTab(tabId, url) {
+  debugLog("FETCH", `Page context paginated fetch: ${url.substring(0, 80)}...`);
+  
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error('Paginated request timed out after 60s'));
+    }, 60000);
+    
+    chrome.tabs.sendMessage(tabId, { type: "FETCH_PAGINATED", url }, (response) => {
+      clearTimeout(timeout);
+      
+      if (chrome.runtime.lastError) {
+        reject(new Error(`Tab communication failed: ${chrome.runtime.lastError.message}`));
+        return;
+      }
+      
+      if (!response) {
+        reject(new Error('No response from content script'));
+        return;
+      }
+      
+      if (response.success) {
+        resolve(response.data);
+      } else {
+        reject(new Error(response.error || 'Unknown error'));
+      }
+    });
+  });
+}
+
+// Try multiple API endpoints sequentially until one succeeds
+async function trySequentialViaTab(tabId, fetchers) {
   const errors = [];
   for (const fetcher of fetchers) {
     try {
@@ -208,6 +174,9 @@ async function trySequentialDirect(fetchers) {
   }
   throw new Error(`All API endpoints failed: ${errors.join(', ')}`);
 }
+
+// Store current tabId for API functions
+let currentExportTabId = null;
 
 // ========== MESSAGE HANDLERS ==========
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -325,14 +294,12 @@ async function exportBank(bankId, tabId) {
     return;
   }
   
+  // Store tabId for API functions to use
+  currentExportTabId = tabId;
+  
   try {
-    // Validate we have tokens before starting
-    if (capturedTokens.size === 0) {
-      sendError(tabId, "🔑 No authentication tokens captured. Please refresh the Canvas page and try again.");
-      return;
-    }
-    
-    debugLog("AUTH", `Starting export with ${capturedTokens.size} captured tokens`);
+    // We no longer require tokens in background - they're in the page context
+    debugLog("AUTH", `Starting export (tokens are in page context)`);
     
     // Step 1: Resolve API base
     sendProgress(tabId, 1, "Detecting API endpoint...");
@@ -465,20 +432,20 @@ function transformItemToJSON(item) {
   };
 }
 
-// ========== API FUNCTIONS (Direct fetch using background's tokens) ==========
+// ========== API FUNCTIONS (Page context fetch using session cookies) ==========
 async function fetchBankMetadata(apiBase, bankId) {
-  return trySequentialDirect([
-    () => directApiFetch(`${apiBase}banks/${bankId}`),
-    () => directApiFetch(`${apiBase}item_banks/${bankId}`)
+  return trySequentialViaTab(currentExportTabId, [
+    () => apiFetchViaTab(currentExportTabId, `${apiBase}banks/${bankId}`),
+    () => apiFetchViaTab(currentExportTabId, `${apiBase}item_banks/${bankId}`)
   ]);
 }
 
 async function fetchAllEntries(apiBase, bankId) {
-  return trySequentialDirect([
-    () => directPaginatedFetch(`${apiBase}banks/${bankId}/bank_entries/search`),
-    () => directPaginatedFetch(`${apiBase}banks/${bankId}/bank_entries`),
-    () => directPaginatedFetch(`${apiBase}banks/${bankId}/items`),
-    () => directPaginatedFetch(`${apiBase}item_banks/${bankId}/items`)
+  return trySequentialViaTab(currentExportTabId, [
+    () => paginatedFetchViaTab(currentExportTabId, `${apiBase}banks/${bankId}/bank_entries/search`),
+    () => paginatedFetchViaTab(currentExportTabId, `${apiBase}banks/${bankId}/bank_entries`),
+    () => paginatedFetchViaTab(currentExportTabId, `${apiBase}banks/${bankId}/items`),
+    () => paginatedFetchViaTab(currentExportTabId, `${apiBase}item_banks/${bankId}/items`)
   ]);
 }
 
@@ -510,9 +477,9 @@ async function fetchItemDefinitions(apiBase, bankId, entries) {
     else if (entry.item_id || entry.id) {
       const itemId = entry.item_id || entry.id;
       try {
-        const item = await trySequentialDirect([
-          () => directApiFetch(`${apiBase}banks/${bankId}/bank_entries/${entry.id}`),
-          () => directApiFetch(`${apiBase}items/${itemId}`)
+        const item = await trySequentialViaTab(currentExportTabId, [
+          () => apiFetchViaTab(currentExportTabId, `${apiBase}banks/${bankId}/bank_entries/${entry.id}`),
+          () => apiFetchViaTab(currentExportTabId, `${apiBase}items/${itemId}`)
         ]);
         
         if (item.entry && item.entry.id) {
