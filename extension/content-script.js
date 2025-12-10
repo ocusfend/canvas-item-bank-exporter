@@ -523,16 +523,20 @@ function scanForIframes() {
 // BODY WAITER (Canvas hydration safety)
 // ============================================
 
-function waitForBody(callback, retries = 40) {
-  // Stronger check: body must exist AND be a valid Node
-  if (document.body && document.body instanceof Node) {
-    callback();
+function waitForBody(callback, retries = 50) {
+  const body = document.body;
+  
+  // Ensure body exists AND is an ELEMENT node (not comment/text/etc)
+  if (body && body.nodeType === Node.ELEMENT_NODE) {
+    callback(body);
     return;
   }
+  
   if (retries <= 0) {
-    console.error("[CanvasExporter] ERROR: document.body never became available.");
+    console.error("[CanvasExporter] ERROR: document.body never became a valid Element.");
     return;
   }
+  
   setTimeout(() => waitForBody(callback, retries - 1), 50);
 }
 
@@ -542,9 +546,9 @@ function waitForBody(callback, retries = 40) {
 // ============================================
 
 function setupObserver() {
-  // Sanity guard for document.body
-  if (!document.body) {
-    console.error("[CanvasExporter] setupObserver called without document.body");
+  // Sanity guard: body must be an ELEMENT_NODE
+  if (!document.body || document.body.nodeType !== Node.ELEMENT_NODE) {
+    console.error("[CanvasExporter] setupObserver called without valid document.body element");
     return;
   }
   
@@ -704,8 +708,9 @@ setupPostMessageListener();
 setTimeout(() => {
   scanForIframes();
   
-  // Only attach observer once body exists
+  // Only attach observer once body exists as valid ELEMENT
   waitForBody(() => {
+    debugLog("Body is ready → starting MutationObserver");
     setupObserver();
   });
 }, 75);
