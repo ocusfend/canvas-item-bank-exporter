@@ -62,63 +62,107 @@
 
   // -------- BEARER TOKEN CAPTURE & STORAGE --------
   let lastSentToken = null;
-  const capturedTokens = new Map(); // Store tokens for our own API calls
+  // Store tokens with their authType: { token: string, authType: string | null, isJWT: boolean }
+  const capturedTokens = new Map();
 
-  function emitBearerToken(bearerToken, apiDomain, source) {
+  function emitBearerToken(bearerToken, apiDomain, source, authType = null) {
+    const isJWT = bearerToken.startsWith('eyJ');
     const key = `${apiDomain}:${bearerToken.slice(0, 20)}`;
     if (lastSentToken === key) return;
     lastSentToken = key;
 
+    const tokenInfo = { token: bearerToken, authType, isJWT };
+
     // Store the token for our own API calls
-    capturedTokens.set(apiDomain, bearerToken);
+    capturedTokens.set(apiDomain, tokenInfo);
     
     // Also store with domain pattern matching for quiz-api
     // quiz-lti tokens work for quiz-api endpoints
     if (apiDomain.includes('quiz-lti')) {
       const apiDomain2 = apiDomain.replace('quiz-lti', 'quiz-api');
-      capturedTokens.set(apiDomain2, bearerToken);
+      capturedTokens.set(apiDomain2, tokenInfo);
       console.log("%c[CanvasExporter] Token also mapped to:", "color:#4caf50", apiDomain2);
     }
+    
+    // Also map quiz-api back to quiz-lti
+    if (apiDomain.includes('quiz-api')) {
+      const ltiDomain = apiDomain.replace('quiz-api', 'quiz-lti');
+      capturedTokens.set(ltiDomain, tokenInfo);
+      console.log("%c[CanvasExporter] Token also mapped to:", "color:#4caf50", ltiDomain);
+    }
 
-    console.log("%c[CanvasExporter] ✓ Bearer token captured & stored!", "color:#4caf50;font-weight:bold;font-size:14px");
+    console.log("%c[CanvasExporter] ✓ Token captured & stored!", "color:#4caf50;font-weight:bold;font-size:14px");
     console.log("%c  Source:", "color:#4caf50", source);
     console.log("%c  Domain:", "color:#4caf50", apiDomain);
-    console.log("%c  Token preview:", "color:#4caf50", bearerToken.slice(0, 50) + "...");
+    console.log("%c  Is JWT:", "color:#4caf50", isJWT);
+    console.log("%c  Authtype:", "color:#4caf50", authType || "(none)");
+    console.log("%c  Token preview:", "color:#4caf50", bearerToken.slice(0, 80) + "...");
     console.log("%c  Stored domains:", "color:#4caf50", [...capturedTokens.keys()]);
 
     window.dispatchEvent(new CustomEvent("CanvasExporter_AuthDetected", {
-      detail: { bearerToken, apiDomain }
+      detail: { bearerToken, apiDomain, authType, isJWT }
     }));
   }
 
-  // Find the right token for a URL
+  // Find the right token for a URL - prioritize JWT tokens
   function findTokenForUrl(url) {
     try {
       const urlObj = new URL(url);
       const host = urlObj.origin;
       
-      // Exact match
+      // First, try to find a JWT token (starts with eyJ) - these are more privileged
+      // Check exact match first for JWT
       if (capturedTokens.has(host)) {
-        return capturedTokens.get(host);
+        const tokenInfo = capturedTokens.get(host);
+        if (tokenInfo.isJWT) {
+          console.log("[CanvasExporter] Found exact JWT match for:", host);
+          return tokenInfo;
+        }
       }
       
-      // Find quiz-api → quiz-lti mapping
-      for (const [domain, token] of capturedTokens) {
-        if (host.includes('quiz-api') && domain.includes('quiz-lti')) {
-          // Match region prefixes (e.g., sin-prod, eu-prod)
-          const hostMatch = host.match(/quiz-api[.-]([^.]+)/);
-          const domainMatch = domain.match(/quiz-lti[.-]([^.]+)/);
-          if (hostMatch && domainMatch && hostMatch[1] === domainMatch[1]) {
-            return token;
+      // Look for any JWT token that matches quiz-api domain pattern
+      for (const [domain, tokenInfo] of capturedTokens) {
+        if (tokenInfo.isJWT) {
+          // If target is quiz-api, check if we have a matching JWT
+          if (host.includes('quiz-api') || host.includes('quiz-lti')) {
+            // Match region prefixes (e.g., sin-prod, eu-prod)
+            const hostMatch = host.match(/quiz-(?:api|lti)[.-]([^.]+)/);
+            const domainMatch = domain.match(/quiz-(?:api|lti)[.-]([^.]+)/);
+            if (hostMatch && domainMatch && hostMatch[1] === domainMatch[1]) {
+              console.log("[CanvasExporter] Found JWT match for region:", hostMatch[1]);
+              return tokenInfo;
+            }
           }
         }
       }
       
-      // Fallback to any quiz-lti token
-      for (const [domain, token] of capturedTokens) {
-        if (domain.includes('quiz-lti')) {
-          return token;
+      // Fallback to any JWT token
+      for (const [domain, tokenInfo] of capturedTokens) {
+        if (tokenInfo.isJWT) {
+          console.log("[CanvasExporter] Using fallback JWT from:", domain);
+          return tokenInfo;
         }
+      }
+      
+      // If no JWT, try exact match for non-JWT
+      if (capturedTokens.has(host)) {
+        return capturedTokens.get(host);
+      }
+      
+      // Find quiz-api → quiz-lti mapping for non-JWT
+      for (const [domain, tokenInfo] of capturedTokens) {
+        if (host.includes('quiz-api') && domain.includes('quiz-lti')) {
+          const hostMatch = host.match(/quiz-api[.-]([^.]+)/);
+          const domainMatch = domain.match(/quiz-lti[.-]([^.]+)/);
+          if (hostMatch && domainMatch && hostMatch[1] === domainMatch[1]) {
+            return tokenInfo;
+          }
+        }
+      }
+      
+      // Fallback to any token
+      for (const [domain, tokenInfo] of capturedTokens) {
+        return tokenInfo;
       }
     } catch (e) {
       console.warn("[CanvasExporter] findTokenForUrl error:", e);
@@ -138,14 +182,60 @@
       console.log("%c[CanvasExporter] API call:", "color:#2196f3", url.slice(0, 100));
     }
 
-    // Make the actual request first
+    // Capture Authorization headers BEFORE making the request
+    const headers = init?.headers;
+    let authHeader = null;
+    let authType = null;
+    
+    if (headers) {
+      if (typeof headers.get === 'function') {
+        authHeader = headers.get('Authorization') || headers.get('authorization');
+        authType = headers.get('Authtype') || headers.get('authtype');
+      } else if (typeof headers === 'object') {
+        authHeader = headers.Authorization || headers.authorization;
+        authType = headers.Authtype || headers.authtype;
+      }
+    }
+    
+    // Capture JWT tokens (start with eyJ) - these are the full tokens Canvas uses
+    if (authHeader && typeof authHeader === 'string') {
+      let token = authHeader;
+      
+      // Strip "Bearer " prefix if present
+      if (token.startsWith('Bearer ')) {
+        token = token.replace('Bearer ', '');
+      }
+      
+      // Prioritize JWT tokens (start with eyJ)
+      if (token.startsWith('eyJ')) {
+        console.log("%c[CanvasExporter] ★ JWT Authorization detected!", "color:#e91e63;font-weight:bold;font-size:14px");
+        console.log("%c  URL:", "color:#e91e63", url.slice(0, 100));
+        console.log("%c  Authtype:", "color:#e91e63", authType || "(none)");
+        
+        try {
+          const urlObj = new URL(url, window.location.origin);
+          emitBearerToken(token, urlObj.origin, "JWT Authorization header", authType);
+        } catch (e) {
+          console.warn("[CanvasExporter] Failed to extract JWT:", e);
+        }
+      } else if (token.length > 20) {
+        // Also capture non-JWT tokens as fallback
+        console.log("%c[CanvasExporter] Non-JWT Authorization header detected", "color:#ff9800");
+        try {
+          const urlObj = new URL(url, window.location.origin);
+          emitBearerToken(token, urlObj.origin, "Authorization header", authType);
+        } catch (e) {
+          console.warn("[CanvasExporter] Failed to extract token:", e);
+        }
+      }
+    }
+
+    // Make the actual request
     const response = await origFetch.apply(this, arguments);
 
-    // Capture SDK token from /sdk_token endpoint response
+    // Capture SDK token from /sdk_token endpoint response (fallback)
     if (url.includes('/sdk_token') || url.includes('sdk_token?')) {
       console.log("%c[CanvasExporter] sdk_token endpoint detected!", "color:#ff9800;font-weight:bold");
-      console.log("%c  URL:", "color:#ff9800", url);
-      console.log("%c  Status:", "color:#ff9800", response.status);
       
       try {
         const urlObj = new URL(url, window.location.origin);
@@ -155,47 +245,18 @@
         const clonedResponse = response.clone();
         const data = await clonedResponse.json();
         
-        console.log("%c  Response keys:", "color:#ff9800", Object.keys(data));
-        
         // Canvas SDK token response contains a "token" field
         if (data.token) {
-          emitBearerToken(data.token, apiDomain, "sdk_token response");
-        } else {
-          console.warn("[CanvasExporter] sdk_token response has no 'token' field:", data);
+          emitBearerToken(data.token, apiDomain, "sdk_token response", null);
         }
       } catch (e) {
         console.warn("[CanvasExporter] Failed to parse sdk_token response:", e);
       }
     }
-    
-    // Also capture Authorization headers from any request Canvas makes
-    const headers = init?.headers;
-    let authHeader = null;
-    
-    if (headers) {
-      if (typeof headers.get === 'function') {
-        authHeader = headers.get('Authorization') || headers.get('authorization');
-      } else if (typeof headers === 'object') {
-        authHeader = headers.Authorization || headers.authorization;
-      }
-    }
-    
-    if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
-      console.log("%c[CanvasExporter] Authorization header detected!", "color:#e91e63;font-weight:bold");
-      console.log("%c  URL:", "color:#e91e63", url.slice(0, 80));
-      
-      try {
-        const token = authHeader.replace('Bearer ', '');
-        const urlObj = new URL(url, window.location.origin);
-        emitBearerToken(token, urlObj.origin, "Authorization header");
-      } catch (e) {
-        console.warn("[CanvasExporter] Failed to extract token from header:", e);
-      }
-    }
 
     return response;
   };
-  console.log("[CanvasExporter] fetch() patched with SDK token capture (debug mode)");
+  console.log("[CanvasExporter] fetch() patched with JWT token capture");
 
   // -------- XHR PATCH --------
   const origOpen = XMLHttpRequest.prototype.open;
@@ -252,12 +313,26 @@
     
     try {
       // Find the right token for this URL
-      const token = findTokenForUrl(url);
+      const tokenInfo = findTokenForUrl(url);
       
-      const headers = { 'Accept': 'application/json' };
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-        console.log("[CanvasExporter] Using captured token for:", url.slice(0, 80));
+      const headers = { 
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      };
+      
+      if (tokenInfo && tokenInfo.token) {
+        // JWT tokens (eyJ...) go without "Bearer" prefix, just like Canvas does
+        if (tokenInfo.isJWT) {
+          headers['Authorization'] = tokenInfo.token; // No "Bearer" prefix for JWT
+          if (tokenInfo.authType) {
+            headers['Authtype'] = tokenInfo.authType; // Include Authtype header
+          }
+          console.log("[CanvasExporter] Using JWT token with Authtype:", tokenInfo.authType);
+        } else {
+          // Non-JWT tokens use Bearer prefix
+          headers['Authorization'] = `Bearer ${tokenInfo.token}`;
+        }
+        console.log("[CanvasExporter] Token applied for:", url.slice(0, 80));
       } else {
         console.warn("[CanvasExporter] No token available for:", url);
       }
@@ -317,5 +392,5 @@
     console.log("[CanvasExporter] MutationObserver running");
   }
 
-  console.log("[CanvasExporter] Phase 4 page script active");
+  console.log("[CanvasExporter] Phase 4 page script active (JWT capture enabled)");
 })();
