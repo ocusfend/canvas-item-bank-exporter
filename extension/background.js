@@ -10,6 +10,11 @@ let detectedApiBase = null;
 let capturedTokens = new Map();
 
 // ========== TOKEN DOMAIN MATCHING ==========
+// Helper to check if a token looks like a JWT
+function isJwtToken(token) {
+  return token && token.startsWith('eyJ');
+}
+
 function findTokenForUrl(url) {
   debugLog("AUTH", `Looking for token for: ${url}`);
   debugLog("AUTH", `Available tokens: ${capturedTokens.size}`);
@@ -19,46 +24,38 @@ function findTokenForUrl(url) {
     return null;
   }
   
-  // Log all stored domains
+  // Log all stored domains with token type
   for (const [domain, auth] of capturedTokens) {
-    debugLog("AUTH", `  Stored domain: ${domain} (token: ${auth.bearerToken?.substring(0, 20)}...)`);
+    const tokenType = isJwtToken(auth.bearerToken) ? 'JWT' : 'Session';
+    debugLog("AUTH", `  Stored: ${domain} (${tokenType}: ${auth.bearerToken?.substring(0, 20)}...)`);
   }
   
   try {
     const urlObj = new URL(url);
     const targetHost = urlObj.hostname;
     
-    // First try exact match
+    // PRIORITY 1: For quiz-api URLs, prefer quiz-lti NON-JWT tokens first
+    // These session tokens (starting with rq_) are the valid auth tokens
+    if (targetHost.includes('quiz-api')) {
+      for (const [domain, auth] of capturedTokens) {
+        if (domain.includes('quiz-lti') && !isJwtToken(auth.bearerToken)) {
+          debugLog("AUTH", `✓ Using quiz-lti session token for ${targetHost}`);
+          return auth.bearerToken;
+        }
+      }
+    }
+    
+    // PRIORITY 2: Exact domain match, but skip JWT tokens for quiz-api
     for (const [domain, auth] of capturedTokens) {
       try {
         const authHost = new URL(domain).hostname;
         if (authHost === targetHost) {
-          debugLog("AUTH", `Exact token match for ${targetHost}`);
-          return auth.bearerToken;
-        }
-      } catch (e) {
-        continue;
-      }
-    }
-    
-    // Try quiz-lti to quiz-api mapping
-    for (const [domain, auth] of capturedTokens) {
-      try {
-        const authHost = new URL(domain).hostname;
-        
-        if (targetHost.includes('quiz-api') && authHost.includes('quiz-lti')) {
-          const ltiMatch = authHost.match(/^(.+?)\.quiz-lti-(.+)\.instructure\.com$/);
-          const apiMatch = targetHost.match(/^(.+?)\.quiz-api-(.+)\.instructure\.com$/);
-          
-          if (ltiMatch && apiMatch && ltiMatch[1] === apiMatch[1] && ltiMatch[2] === apiMatch[2]) {
-            debugLog("AUTH", `Matched quiz-lti token for ${targetHost}`);
-            return auth.bearerToken;
+          // For quiz-api, skip JWT tokens as they don't work
+          if (targetHost.includes('quiz-api') && isJwtToken(auth.bearerToken)) {
+            debugLog("AUTH", `Skipping JWT token for ${targetHost}`);
+            continue;
           }
-        }
-        
-        // Also try reverse: quiz-api token for quiz-api URL
-        if (targetHost.includes('quiz-api') && authHost.includes('quiz-api')) {
-          debugLog("AUTH", `Matched quiz-api token for ${targetHost}`);
+          debugLog("AUTH", `✓ Exact token match for ${targetHost}`);
           return auth.bearerToken;
         }
       } catch (e) {
@@ -66,20 +63,28 @@ function findTokenForUrl(url) {
       }
     }
     
-    // Fallback: any quiz-related token for quiz-api URL
+    // PRIORITY 3: Quiz-lti to quiz-api cross-domain mapping (non-JWT preferred)
     if (targetHost.includes('quiz-api')) {
       for (const [domain, auth] of capturedTokens) {
-        if (domain.includes('quiz-lti') || domain.includes('quiz-api')) {
-          debugLog("AUTH", `Fallback quiz token for ${targetHost}`);
+        if (domain.includes('quiz-lti')) {
+          debugLog("AUTH", `✓ Using quiz-lti token for quiz-api: ${targetHost}`);
           return auth.bearerToken;
         }
       }
     }
     
-    // Last resort: use first available token
+    // PRIORITY 4: Any non-JWT token
+    for (const [domain, auth] of capturedTokens) {
+      if (!isJwtToken(auth.bearerToken)) {
+        debugLog("AUTH", `✓ Using non-JWT fallback token for ${targetHost}`);
+        return auth.bearerToken;
+      }
+    }
+    
+    // Last resort: use first available token (even if JWT)
     if (capturedTokens.size > 0) {
       const firstToken = capturedTokens.values().next().value;
-      debugLog("AUTH", `Using first available token for ${targetHost}`);
+      debugLog("AUTH", `⚠ Using first available token (may be JWT) for ${targetHost}`);
       return firstToken.bearerToken;
     }
   } catch (e) {
