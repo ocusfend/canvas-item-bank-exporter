@@ -1,4 +1,4 @@
-import JSZip from './jszip.min.js';
+import JSZip from './jszip.mjs';
 import { 
   apiFetch, trySequential, paginatedFetch, asyncPool,
   isSupported, generateItemXML, generateManifestXML, generateAssessmentXML,
