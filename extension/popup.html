@@ -104,6 +104,37 @@
       line-height: 1.4;
     }
 
+    #auth-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      margin-bottom: 12px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    #auth-status.pending {
+      background: #fff3e0;
+      color: #e65100;
+    }
+    #auth-status.authenticated {
+      background: #e8f5e9;
+      color: #2e7d32;
+    }
+    #auth-status .indicator {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    #auth-status.pending .indicator {
+      background: #ff9800;
+    }
+    #auth-status.authenticated .indicator {
+      background: #4caf50;
+    }
+
     .refresh-btn {
       background: none;
       border: none;
@@ -123,6 +154,11 @@
     📚 Canvas Item Bank Exporter
     <button id="refreshBtn" class="refresh-btn" title="Refresh">🔄</button>
   </h2>
+  
+  <div id="auth-status" class="pending">
+    <span class="indicator"></span>
+    <span id="auth-text">No auth token captured</span>
+  </div>
   
   <div id="status" class="status">
     Waiting for bank detection...

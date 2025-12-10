@@ -6,11 +6,28 @@ const progressStep = document.getElementById('progress-step');
 const progressText = document.getElementById('progress-text');
 const skippedWarning = document.getElementById('skipped-warning');
 const skippedDetails = document.getElementById('skipped-details');
+const authStatus = document.getElementById('auth-status');
+const authText = document.getElementById('auth-text');
 
 let currentBankId = null;
 
+function updateAuthStatus(hasAuth, domain) {
+  if (hasAuth) {
+    authStatus.classList.remove('pending');
+    authStatus.classList.add('authenticated');
+    authText.textContent = domain ? `Authenticated (${new URL(domain).hostname})` : 'Token captured ✓';
+  } else {
+    authStatus.classList.remove('authenticated');
+    authStatus.classList.add('pending');
+    authText.textContent = 'No auth token captured';
+  }
+}
+
 function refresh() {
   chrome.runtime.sendMessage({ type: "REQUEST_BANK" }, (response) => {
+    // Update auth status
+    updateAuthStatus(response?.hasAuth, response?.authDomain);
+    
     if (response?.bank?.id) {
       currentBankId = response.bank.id;
       showBankDetected(currentBankId);
