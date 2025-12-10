@@ -62,8 +62,13 @@
 
   // -------- BEARER TOKEN CAPTURE & STORAGE --------
   let lastSentToken = null;
-  // Store tokens with their authType: { token: string, authType: string | null, isJWT: boolean }
+  // Store tokens with their authType: { token: string, authType: string | null, isJWT: boolean, capturedAt: number }
   const capturedTokens = new Map();
+  
+  // -------- RESPONSE CACHING --------
+  // Cache successful API responses to avoid needing to replay with expired tokens
+  const responseCache = new Map(); // { url -> { data, timestamp } }
+  const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
   function emitBearerToken(bearerToken, apiDomain, source, authType = null) {
     const isJWT = bearerToken.startsWith('eyJ');
@@ -71,7 +76,7 @@
     if (lastSentToken === key) return;
     lastSentToken = key;
 
-    const tokenInfo = { token: bearerToken, authType, isJWT };
+    const tokenInfo = { token: bearerToken, authType, isJWT, capturedAt: Date.now() };
 
     // Store the token for our own API calls
     capturedTokens.set(apiDomain, tokenInfo);
@@ -104,32 +109,52 @@
     }));
   }
 
-  // Find the right token for a URL - prioritize JWT tokens
+  // Find the right token for a URL - prioritize fresh JWT tokens
   function findTokenForUrl(url) {
+    const FRESH_THRESHOLD = 30000; // 30 seconds
+    const now = Date.now();
+    
     try {
       const urlObj = new URL(url);
       const host = urlObj.origin;
       
-      // First, try to find a JWT token (starts with eyJ) - these are more privileged
-      // Check exact match first for JWT
+      // First, try to find a FRESH JWT token (captured within last 30 seconds)
+      for (const [domain, tokenInfo] of capturedTokens) {
+        if (tokenInfo.isJWT && (now - tokenInfo.capturedAt) < FRESH_THRESHOLD) {
+          // Check domain match for quiz endpoints
+          if (host.includes('quiz-api') || host.includes('quiz-lti')) {
+            const hostMatch = host.match(/quiz-(?:api|lti)[.-]([^.]+)/);
+            const domainMatch = domain.match(/quiz-(?:api|lti)[.-]([^.]+)/);
+            if (hostMatch && domainMatch && hostMatch[1] === domainMatch[1]) {
+              console.log("[CanvasExporter] Found FRESH JWT match for region:", hostMatch[1], "age:", now - tokenInfo.capturedAt, "ms");
+              return tokenInfo;
+            }
+          }
+          // If target matches domain exactly
+          if (domain === host) {
+            console.log("[CanvasExporter] Found FRESH exact JWT match for:", host);
+            return tokenInfo;
+          }
+        }
+      }
+      
+      // Second, try exact domain match for any JWT
       if (capturedTokens.has(host)) {
         const tokenInfo = capturedTokens.get(host);
         if (tokenInfo.isJWT) {
-          console.log("[CanvasExporter] Found exact JWT match for:", host);
+          console.log("[CanvasExporter] Found exact JWT match for:", host, "age:", now - tokenInfo.capturedAt, "ms");
           return tokenInfo;
         }
       }
       
-      // Look for any JWT token that matches quiz-api domain pattern
+      // Third, look for any JWT token that matches quiz-api domain pattern
       for (const [domain, tokenInfo] of capturedTokens) {
         if (tokenInfo.isJWT) {
-          // If target is quiz-api, check if we have a matching JWT
           if (host.includes('quiz-api') || host.includes('quiz-lti')) {
-            // Match region prefixes (e.g., sin-prod, eu-prod)
             const hostMatch = host.match(/quiz-(?:api|lti)[.-]([^.]+)/);
             const domainMatch = domain.match(/quiz-(?:api|lti)[.-]([^.]+)/);
             if (hostMatch && domainMatch && hostMatch[1] === domainMatch[1]) {
-              console.log("[CanvasExporter] Found JWT match for region:", hostMatch[1]);
+              console.log("[CanvasExporter] Found JWT match for region:", hostMatch[1], "age:", now - tokenInfo.capturedAt, "ms");
               return tokenInfo;
             }
           }
@@ -139,7 +164,7 @@
       // Fallback to any JWT token
       for (const [domain, tokenInfo] of capturedTokens) {
         if (tokenInfo.isJWT) {
-          console.log("[CanvasExporter] Using fallback JWT from:", domain);
+          console.log("[CanvasExporter] Using fallback JWT from:", domain, "age:", now - tokenInfo.capturedAt, "ms");
           return tokenInfo;
         }
       }
@@ -232,6 +257,18 @@
 
     // Make the actual request
     const response = await origFetch.apply(this, arguments);
+    
+    // Cache successful API responses for quiz endpoints
+    if (response.ok && (url.includes('/api/banks/') || url.includes('/api/items') || url.includes('/api/entries'))) {
+      try {
+        const clonedResponse = response.clone();
+        const data = await clonedResponse.json();
+        responseCache.set(url, { data, timestamp: Date.now() });
+        console.log("%c[CanvasExporter] Cached response for:", "color:#00bcd4", url.slice(0, 100));
+      } catch (e) {
+        // Ignore cache errors
+      }
+    }
 
     // Capture SDK token from /sdk_token endpoint response (fallback)
     if (url.includes('/sdk_token') || url.includes('sdk_token?')) {
@@ -312,6 +349,18 @@
     console.log("[CanvasExporter] Page context fetch request:", { requestId, url, paginated });
     
     try {
+      // Check cache first (within TTL)
+      const cached = responseCache.get(url);
+      if (cached && (Date.now() - cached.timestamp) < CACHE_TTL_MS) {
+        console.log("%c[CanvasExporter] ★ Cache HIT for:", "color:#00bcd4;font-weight:bold", url.slice(0, 80));
+        console.log("[CanvasExporter] Cache age:", Math.round((Date.now() - cached.timestamp) / 1000), "seconds");
+        
+        window.dispatchEvent(new CustomEvent("CanvasExporter_FetchResponse", {
+          detail: { requestId, success: true, data: cached.data }
+        }));
+        return;
+      }
+      
       // Find the right token for this URL
       const tokenInfo = findTokenForUrl(url);
       
