@@ -63,12 +63,15 @@
   // -------- BEARER TOKEN CAPTURE --------
   let lastSentToken = null;
 
-  function emitBearerToken(bearerToken, apiDomain) {
+  function emitBearerToken(bearerToken, apiDomain, source) {
     const key = `${apiDomain}:${bearerToken.slice(0, 20)}`;
     if (lastSentToken === key) return;
     lastSentToken = key;
 
-    console.log("%c[CanvasExporter] Bearer token captured for:", "color:#4caf50;font-weight:bold", apiDomain);
+    console.log("%c[CanvasExporter] ✓ Bearer token captured!", "color:#4caf50;font-weight:bold;font-size:14px");
+    console.log("%c  Source:", "color:#4caf50", source);
+    console.log("%c  Domain:", "color:#4caf50", apiDomain);
+    console.log("%c  Token preview:", "color:#4caf50", bearerToken.slice(0, 50) + "...");
 
     window.dispatchEvent(new CustomEvent("CanvasExporter_AuthDetected", {
       detail: { bearerToken, apiDomain }
@@ -82,11 +85,20 @@
     const bank = tryParseBank(url);
     if (bank) sendBank(bank);
 
+    // Log all quiz-related API calls for debugging
+    if (url.includes('quiz') || url.includes('/api/')) {
+      console.log("%c[CanvasExporter] API call:", "color:#2196f3", url.slice(0, 100));
+    }
+
     // Make the actual request first
     const response = await origFetch.apply(this, arguments);
 
     // Capture SDK token from /sdk_token endpoint response
     if (url.includes('/sdk_token') || url.includes('sdk_token?')) {
+      console.log("%c[CanvasExporter] sdk_token endpoint detected!", "color:#ff9800;font-weight:bold");
+      console.log("%c  URL:", "color:#ff9800", url);
+      console.log("%c  Status:", "color:#ff9800", response.status);
+      
       try {
         const urlObj = new URL(url, window.location.origin);
         const apiDomain = urlObj.origin;
@@ -95,9 +107,13 @@
         const clonedResponse = response.clone();
         const data = await clonedResponse.json();
         
+        console.log("%c  Response keys:", "color:#ff9800", Object.keys(data));
+        
         // Canvas SDK token response contains a "token" field
         if (data.token) {
-          emitBearerToken(data.token, apiDomain);
+          emitBearerToken(data.token, apiDomain, "sdk_token response");
+        } else {
+          console.warn("[CanvasExporter] sdk_token response has no 'token' field:", data);
         }
       } catch (e) {
         console.warn("[CanvasExporter] Failed to parse sdk_token response:", e);
@@ -106,21 +122,32 @@
     
     // Also capture Authorization headers from any request Canvas makes
     const headers = init?.headers;
-    const authHeader = headers?.Authorization || headers?.authorization || 
-                       (headers?.get && headers.get('Authorization'));
+    let authHeader = null;
+    
+    if (headers) {
+      if (typeof headers.get === 'function') {
+        authHeader = headers.get('Authorization') || headers.get('authorization');
+      } else if (typeof headers === 'object') {
+        authHeader = headers.Authorization || headers.authorization;
+      }
+    }
+    
     if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+      console.log("%c[CanvasExporter] Authorization header detected!", "color:#e91e63;font-weight:bold");
+      console.log("%c  URL:", "color:#e91e63", url.slice(0, 80));
+      
       try {
         const token = authHeader.replace('Bearer ', '');
         const urlObj = new URL(url, window.location.origin);
-        emitBearerToken(token, urlObj.origin);
+        emitBearerToken(token, urlObj.origin, "Authorization header");
       } catch (e) {
-        // Ignore
+        console.warn("[CanvasExporter] Failed to extract token from header:", e);
       }
     }
 
     return response;
   };
-  console.log("[CanvasExporter] fetch() patched with SDK token capture");
+  console.log("[CanvasExporter] fetch() patched with SDK token capture (debug mode)");
 
   // -------- XHR PATCH --------
   const origOpen = XMLHttpRequest.prototype.open;
