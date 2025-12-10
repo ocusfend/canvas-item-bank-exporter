@@ -1,23 +1,20 @@
 {
   "name": "Canvas New Quizzes Item Bank Exporter",
-  "version": "0.4.0",
+  "version": "0.3.4",
   "manifest_version": 3,
+  "description": "Export New Quizzes item banks directly from Canvas.",
 
-  "description": "Detect Canvas New Quizzes item banks directly via API sniffing.",
-
-  "permissions": ["storage"],
-
-  "host_permissions": ["*://*.instructure.com/*"],
-
-  "background": {
-    "service_worker": "background.js",
-    "type": "module"
-  },
+  "permissions": ["storage", "webRequest"],
+  "host_permissions": [
+    "*://*.instructure.com/*",
+    "*://*.quiz-lti-*.instructure.com/*",
+    "*://*.quiz-api-*.instructure.com/*",
+    "*://*/api/banks/*"
+  ],
 
   "content_scripts": [
     {
       "matches": [
-        "*://*.instructure.com/*",
         "*://*.instructure.com/*",
         "*://*.quiz-lti-*.instructure.com/*",
         "*://*.quiz-api-*.instructure.com/*",
@@ -30,6 +27,11 @@
       "match_origin_as_fallback": true
     }
   ],
+
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
 
   "action": {
     "default_popup": "popup.html",
