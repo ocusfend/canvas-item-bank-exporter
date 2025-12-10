@@ -6,11 +6,11 @@
 
   "permissions": ["storage", "scripting", "webRequest"],
 
-  "host_permissions": ["*://*.instructure.com/*", "*://*.quiz-api-*-prod.instructure.com/*"],
+  "host_permissions": ["*://*.instructure.com/*"],
 
   "content_scripts": [
     {
-      "matches": ["*://*.instructure.com/*", "*://*.quiz-api-*-prod.instructure.com/*"],
+      "matches": ["*://*.instructure.com/*"],
       "js": ["content-script.js"],
       "all_frames": true,
       "run_at": "document_start"
