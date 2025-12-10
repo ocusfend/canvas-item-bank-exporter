@@ -263,6 +263,10 @@ async function exportBank(bankId, tabId) {
       throw e;
     }
     
+    // Debug: Log what we actually got
+    console.log("[Export Debug] entries count:", entries.length);
+    console.log("[Export Debug] first entry:", entries[0]);
+    console.log("[Export Debug] first entry.entry:", entries[0]?.entry);
     debugLog("FETCH", `Found ${entries.length} entries`);
     
     // Validate that we actually got items
