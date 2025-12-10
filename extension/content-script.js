@@ -5,21 +5,27 @@
 
 (() => {
 
-  // HARD GLOBAL SINGLETON STATE (never cleared)
-  // Used only to prevent duplicate observer/listener creation.
+  // GLOBAL SINGLETON STATE (never cleared across reinjections)
   if (!window.CanvasExporter_GlobalState) {
     window.CanvasExporter_GlobalState = {
       postMessageListenerAttached: false,
       mutationObserverAttached: false,
       smartPollingAttached: false,
-      trackedIframes: new WeakSet(),
+
+      // IMPORTANT FIX:
+      // WeakSet cannot be iterated; replaced with Set.
+      trackedIframes: new Set(),
+
       confirmedIframes: new WeakMap(),
       iframeLastUrl: new WeakMap(),
+
       lastMessageUuid: null,
       lastIframeUuid: null,
+
       lastIframeCheck: 0,
       lastMutationTime: 0,
       lastMessageTime: 0,
+
       recentBankUuids: [],
       debugEnabled: false,
       debugCount: 0,
@@ -28,7 +34,9 @@
 
   const GS = window.CanvasExporter_GlobalState;
 
-  // Simple UUID cache cleanup
+  // ---------------------------------------------------------------------------
+  // Utility: Track last 10 seen bank UUIDs
+  // ---------------------------------------------------------------------------
   function addRecentBank(uuid) {
     let arr = GS.recentBankUuids;
     arr = arr.filter(x => x !== uuid);
@@ -36,7 +44,10 @@
     GS.recentBankUuids = arr.slice(0, 10);
   }
 
-  // Debug system (idempotent)
+  // ---------------------------------------------------------------------------
+  // DEBUG SYSTEM
+  // ---------------------------------------------------------------------------
+
   const DEBUG_MAX = 50;
 
   chrome.storage.local.get("debug", ({ debug }) => {
@@ -47,7 +58,7 @@
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && changes.debug) {
       GS.debugEnabled = changes.debug.newValue === true;
-      console.log("[CanvasExporter] Debug mode:", GS.debugEnabled ? "ON" : "OFF");
+      console.log("[CanvasExporter] Debug:", GS.debugEnabled ? "ON" : "OFF");
     }
   });
 
@@ -61,24 +72,21 @@
     }
   }
 
-  // Emit custom events
   function emit(eventType, detail) {
     document.dispatchEvent(new CustomEvent("CanvasExporter:" + eventType, { detail }));
     debug("Event emitted:", eventType, detail);
   }
 
-  // --------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
   // UTILITIES
-  // --------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
 
   function isQuizLtiUrl(url) {
     try {
       if (!url || url.startsWith("blob:")) return false;
       const hostname = new URL(url).hostname;
       return hostname.includes("quiz-lti") && hostname.endsWith(".instructure.com");
-    } catch {
-      return false;
-    }
+    } catch { return false; }
   }
 
   const BANK_PATTERNS = [
@@ -104,12 +112,9 @@
       const href = win.location?.href;
       if (!href || href === "about:blank") return null;
       return href;
-    } catch {
-      return null;
-    }
+    } catch { return null; }
   }
 
-  // Fingerprint matcher
   function hasLearnosityFingerprint(obj) {
     if (!obj || typeof obj !== "object") return false;
     const keys = Object.keys(obj);
@@ -127,16 +132,15 @@
     } catch { return null; }
   }
 
-  // --------------------------------------------------------------------------
-  // POSTMESSAGE LISTENER — idempotent
-  // --------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // POSTMESSAGE LISTENER (idempotent)
+  // ---------------------------------------------------------------------------
 
   function classify(event) {
     if (event.origin === "null") return null;
     let data = event.data;
     if (!data || typeof data !== "object") return null;
 
-    // unpack JSON-encoded message fields
     if (typeof data.message === "string" && data.message.trim().startsWith("{")) {
       try { data._unpacked = JSON.parse(data.message); } catch {}
     }
@@ -169,7 +173,7 @@
 
     window.addEventListener("message", (event) => {
       const now = performance.now();
-      if (now - GS.lastMessageTime < 25) return; // debounce
+      if (now - GS.lastMessageTime < 25) return;
       GS.lastMessageTime = now;
 
       const m = classify(event);
@@ -191,7 +195,7 @@
       GS.lastMessageUuid = uuid;
 
       addRecentBank(uuid);
-      debug("Message UUID detected:", uuid);
+      debug("UUID via postMessage:", uuid);
 
       const msg = {
         type: "BANK_CONTEXT_DETECTED",
@@ -209,9 +213,9 @@
     debug("postMessage listener attached");
   }
 
-  // --------------------------------------------------------------------------
-  // IFRAME PROCESSING (idempotent)
-  // --------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // IFRAME PROCESSING
+  // ---------------------------------------------------------------------------
 
   function verifyIframe(iframe) {
     if (!GS.confirmedIframes.get(iframe)) {
@@ -260,7 +264,7 @@
     if (GS.trackedIframes.has(iframe)) return;
     GS.trackedIframes.add(iframe);
 
-    debug("Iframe detected:", iframe.src);
+    debug("Iframe discovered:", iframe.src);
 
     setTimeout(() => {
       if (document.contains(iframe) && (iframe.src || getIframeHref(iframe))) {
@@ -269,7 +273,7 @@
     }, 100);
 
     iframe.addEventListener("load", () => {
-      debug("Iframe load");
+      debug("Iframe load event");
       verifyIframe(iframe);
       setTimeout(() => processIframe(iframe), 50);
     });
@@ -279,13 +283,13 @@
 
   function scanForIframes() {
     const iframes = document.querySelectorAll("iframe");
-    debug(`Scanning existing iframes: ${iframes.length}`);
+    debug(`Initial iframe scan: ${iframes.length}`);
     iframes.forEach(handleIframe);
   }
 
-  // --------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
   // MUTATION OBSERVER (idempotent)
-  // --------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
 
   function attachMutationObserver() {
     if (GS.mutationObserverAttached) return;
@@ -305,19 +309,17 @@
               if (node.nodeName === "IFRAME") {
                 handleIframe(node);
               } else if (node.querySelectorAll) {
-                const iframes = node.querySelectorAll("iframe");
-                iframes.forEach(handleIframe);
+                node.querySelectorAll("iframe").forEach(handleIframe);
               }
             });
           }
 
           if (mut.type === "attributes" && mut.target.nodeName === "IFRAME") {
             debug("Iframe attribute changed:", mut.attributeName);
-            const iframe = mut.target;
-            setTimeout(() => processIframe(iframe), 50);
+            setTimeout(() => processIframe(mut.target), 50);
           }
         } catch (err) {
-          console.error("[CanvasExporter] Observer error", err);
+          console.error("[CanvasExporter] MutationObserver error:", err);
         }
       }
     });
@@ -332,35 +334,35 @@
     debug("MutationObserver attached");
   }
 
-  // --------------------------------------------------------------------------
-  // SMART POLLING (idempotent)
-  // --------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // SMART POLLING — FIXED (Set iteration works)
+  // ---------------------------------------------------------------------------
 
   function attachSmartPolling() {
     if (GS.smartPollingAttached) return;
     GS.smartPollingAttached = true;
 
     setInterval(() => {
-      GS.trackedIframes.forEach((_, iframe) => {
-        if (!document.contains(iframe)) return;
-        if (!GS.confirmedIframes.get(iframe)) return;
+      for (const iframe of GS.trackedIframes) {
+        if (!document.contains(iframe)) continue;
+        if (!GS.confirmedIframes.get(iframe)) continue;
 
         const url = getIframeHref(iframe);
-        if (!url) return;
+        if (!url) continue;
 
-        if (GS.iframeLastUrl.get(iframe) === url) return;
+        if (GS.iframeLastUrl.get(iframe) === url) continue;
 
-        debug("Polling detected iframe URL change:", url);
+        debug("Polling → iframe URL changed:", url);
         processIframe(iframe);
-      });
+      }
     }, 1000);
 
     debug("Smart polling enabled");
   }
 
-  // --------------------------------------------------------------------------
-  // INITIALIZATION (idempotent)
-  // --------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // INITIALIZATION
+  // ---------------------------------------------------------------------------
 
   debug("Content script loaded (Phase 3.3.1)");
 
@@ -371,6 +373,8 @@
     if (document.body) attachMutationObserver();
   }, 75);
 
-  setTimeout(() => attachSmartPolling(), 150);
+  setTimeout(() => {
+    attachSmartPolling();
+  }, 150);
 
 })();
