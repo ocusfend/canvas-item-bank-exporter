@@ -1,20 +1,19 @@
-document.addEventListener("DOMContentLoaded", () => {
-  const el = document.getElementById("bank-status");
-  const btn = document.getElementById("refresh");
+function refreshBank() {
+  chrome.runtime.sendMessage({ type: "CANVAS_EXPORTER_GET_BANK" }, (res) => {
+    const el = document.getElementById("bank");
 
-  function update() {
-    chrome.runtime.sendMessage({ type: "GET_BANK_ID" }, (res) => {
-      const bankId = res?.bankId;
+    if (!res || !res.bank) {
+      el.innerHTML = "<span class='sub'>No bank detected</span>";
+      return;
+    }
 
-      if (!bankId) {
-        el.textContent = "No bank detected";
-        return;
-      }
+    el.innerHTML = `
+      <div class="bank">Bank ${res.bank}</div>
+      <div class="sub">Detected from LTI / API traffic</div>
+    `;
+  });
+}
 
-      el.textContent = `Bank ID: ${bankId}`;
-    });
-  }
+document.getElementById("refresh").addEventListener("click", refreshBank);
 
-  btn.addEventListener("click", update);
-  update();
-});
+refreshBank();
