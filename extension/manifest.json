@@ -8,8 +8,7 @@
 
   "host_permissions": [
     "*://*.instructure.com/*",
-    "*://*.quiz-lti-*.*.instructure.com/*",
-    "*://*.quiz-lti-*.instructure.com/*",
+    "*://lsts.quiz-lti-sin-prod.instructure.com/*",
     "*://*.canvaslms.com/*",
     "*://*.cloudfront.net/*",
     "*://*.lrn.io/*",
@@ -26,8 +25,7 @@
     {
       "matches": [
         "*://*.instructure.com/*",
-        "*://*.quiz-lti-*.*.instructure.com/*",
-        "*://*.quiz-lti-*.instructure.com/*",
+        "*://lsts.quiz-lti-sin-prod.instructure.com/*",
         "*://*.canvaslms.com/*",
         "*://*.cloudfront.net/*",
         "*://*.lrn.io/*",
