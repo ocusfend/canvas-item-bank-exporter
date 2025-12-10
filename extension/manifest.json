@@ -6,7 +6,7 @@
 
   "permissions": ["cookies", "webRequest", "storage"],
 
-  "host_permissions": ["*://*.instructure.com/*"],
+  "host_permissions": ["*://*.instructure.com/*", "*://*.canvaslms.com/*", "*://*.cloudfront.net/*", "*://*.lrn.io/*"],
 
   "background": {
     "service_worker": "background.js",
@@ -15,7 +15,7 @@
 
   "content_scripts": [
     {
-      "matches": ["*://*.instructure.com/*"],
+      "matches": ["*://*.instructure.com/*", "*://*.canvaslms.com/*", "*://*.cloudfront.net/*", "*://*.lrn.io/*"],
       "js": ["content-script.js"],
       "run_at": "document_start",
       "all_frames": true,
