@@ -60,22 +60,70 @@
     return null;
   }
 
-  // -------- BEARER TOKEN CAPTURE --------
+  // -------- BEARER TOKEN CAPTURE & STORAGE --------
   let lastSentToken = null;
+  const capturedTokens = new Map(); // Store tokens for our own API calls
 
   function emitBearerToken(bearerToken, apiDomain, source) {
     const key = `${apiDomain}:${bearerToken.slice(0, 20)}`;
     if (lastSentToken === key) return;
     lastSentToken = key;
 
-    console.log("%c[CanvasExporter] ✓ Bearer token captured!", "color:#4caf50;font-weight:bold;font-size:14px");
+    // Store the token for our own API calls
+    capturedTokens.set(apiDomain, bearerToken);
+    
+    // Also store with domain pattern matching for quiz-api
+    // quiz-lti tokens work for quiz-api endpoints
+    if (apiDomain.includes('quiz-lti')) {
+      const apiDomain2 = apiDomain.replace('quiz-lti', 'quiz-api');
+      capturedTokens.set(apiDomain2, bearerToken);
+      console.log("%c[CanvasExporter] Token also mapped to:", "color:#4caf50", apiDomain2);
+    }
+
+    console.log("%c[CanvasExporter] ✓ Bearer token captured & stored!", "color:#4caf50;font-weight:bold;font-size:14px");
     console.log("%c  Source:", "color:#4caf50", source);
     console.log("%c  Domain:", "color:#4caf50", apiDomain);
     console.log("%c  Token preview:", "color:#4caf50", bearerToken.slice(0, 50) + "...");
+    console.log("%c  Stored domains:", "color:#4caf50", [...capturedTokens.keys()]);
 
     window.dispatchEvent(new CustomEvent("CanvasExporter_AuthDetected", {
       detail: { bearerToken, apiDomain }
     }));
+  }
+
+  // Find the right token for a URL
+  function findTokenForUrl(url) {
+    try {
+      const urlObj = new URL(url);
+      const host = urlObj.origin;
+      
+      // Exact match
+      if (capturedTokens.has(host)) {
+        return capturedTokens.get(host);
+      }
+      
+      // Find quiz-api → quiz-lti mapping
+      for (const [domain, token] of capturedTokens) {
+        if (host.includes('quiz-api') && domain.includes('quiz-lti')) {
+          // Match region prefixes (e.g., sin-prod, eu-prod)
+          const hostMatch = host.match(/quiz-api[.-]([^.]+)/);
+          const domainMatch = domain.match(/quiz-lti[.-]([^.]+)/);
+          if (hostMatch && domainMatch && hostMatch[1] === domainMatch[1]) {
+            return token;
+          }
+        }
+      }
+      
+      // Fallback to any quiz-lti token
+      for (const [domain, token] of capturedTokens) {
+        if (domain.includes('quiz-lti')) {
+          return token;
+        }
+      }
+    } catch (e) {
+      console.warn("[CanvasExporter] findTokenForUrl error:", e);
+    }
+    return null;
   }
 
   // -------- FETCH PATCH --------
@@ -174,12 +222,16 @@
     return links;
   }
 
-  async function paginatedFetchInPage(baseUrl) {
+  async function paginatedFetchWithToken(baseUrl, headers) {
     const results = [];
     let url = baseUrl;
     
     while (url) {
-      const response = await fetch(url, { credentials: 'include' });
+      const response = await fetch(url, { 
+        method: 'GET',
+        headers,
+        credentials: 'omit' // No cookies - use token instead to avoid CORS wildcard conflict
+      });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       
       const data = await response.json();
@@ -199,11 +251,26 @@
     console.log("[CanvasExporter] Page context fetch request:", { requestId, url, paginated });
     
     try {
+      // Find the right token for this URL
+      const token = findTokenForUrl(url);
+      
+      const headers = { 'Accept': 'application/json' };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+        console.log("[CanvasExporter] Using captured token for:", url.slice(0, 80));
+      } else {
+        console.warn("[CanvasExporter] No token available for:", url);
+      }
+      
       let data;
       if (paginated) {
-        data = await paginatedFetchInPage(url);
+        data = await paginatedFetchWithToken(url, headers);
       } else {
-        const response = await fetch(url, { credentials: 'include' });
+        const response = await fetch(url, { 
+          method: 'GET',
+          headers,
+          credentials: 'omit' // No cookies - use token instead
+        });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         data = await response.json();
       }
