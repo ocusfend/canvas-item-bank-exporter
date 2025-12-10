@@ -7,8 +7,13 @@
 // ============================================
 
 // Normalize stale flags from previous loads (Chrome hot reload quirk)
-window.__CanvasExporterLoaded ??= false;
-window.__CanvasExporterSkip ??= false;
+// Using explicit undefined checks to avoid Chrome DevTools ??= parsing bug
+if (window.__CanvasExporterLoaded === undefined) {
+  window.__CanvasExporterLoaded = false;
+}
+if (window.__CanvasExporterSkip === undefined) {
+  window.__CanvasExporterSkip = false;
+}
 
 // Prevent duplicate listeners on hot reload
 if (window.__CanvasExporterLoaded) {
