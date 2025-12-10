@@ -1,48 +1,34 @@
-// Canvas New Quizzes Item Bank Exporter - Content Script
-// Phase 3.3 - Production-grade detection with all guards
+// ===============================================================
+// Canvas New Quizzes Item Bank Exporter — Content Script
+// Phase 3.3.1 — Hardened observer, unified hydration, no dev-tool errors
+// ===============================================================
 
-// ============================================
-// REFINEMENT #9: SINGLE-LOAD GUARD
-// Prevents duplicate listeners on hot reload
-// ============================================
-
-// Normalize stale flags from previous loads (Chrome hot reload quirk)
-// Using explicit undefined checks to avoid Chrome DevTools ??= parsing bug
-if (window.__CanvasExporterLoaded === undefined) {
-  window.__CanvasExporterLoaded = false;
-}
-if (window.__CanvasExporterSkip === undefined) {
-  window.__CanvasExporterSkip = false;
+// ---------------------------------------------------------------
+// SINGLE-LOAD GUARD (Final Version — no partial init ever)
+// ---------------------------------------------------------------
+if (window.__CanvasExporterLoaded === true) {
+  console.log("[CanvasExporter] Already loaded → skipping");
+  // HARD EXIT — prevents double listeners, double observers, partial init
+  return;
 }
 
-// Prevent duplicate listeners on hot reload
-if (window.__CanvasExporterLoaded) {
-  console.log("[CanvasExporter] Already loaded, skipping duplicate init");
-  window.__CanvasExporterSkip = true;
-} else {
-  window.__CanvasExporterLoaded = true;
-  window.__CanvasExporterSkip = false;  // Required to avoid illegal return state
-}
+// First time load
+window.__CanvasExporterLoaded = true;
+console.log("[CanvasExporter] Content script loaded (Phase 3.3.1)");
 
-if (!window.__CanvasExporterSkip) {
 
-// ============================================
-// DEBUG SYSTEM (Dynamic Toggle)
-// Refinement #1: Dynamic DEBUG_ENABLED via storage
-// Refinement #5: Reset counter every 2s for better flow
-// ============================================
-
+// ---------------------------------------------------------------
+// DEBUG SYSTEM
+// ---------------------------------------------------------------
 let DEBUG_ENABLED = false;
 const DEBUG_MAX = 50;
 let debugCount = 0;
 
-// Load debug preference from storage on init
 chrome.storage.local.get("debug", (result) => {
   DEBUG_ENABLED = result.debug === true;
   if (DEBUG_ENABLED) console.log("[CanvasExporter] Debug mode: ON");
 });
 
-// Listen for debug toggle changes from popup
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes.debug) {
     DEBUG_ENABLED = changes.debug.newValue === true;
@@ -50,8 +36,8 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
-// Refinement #5: Reset every 2s instead of 5s
-setInterval(() => { debugCount = 0; }, 2000);
+// Reset debug suppression every 2 seconds
+setInterval(() => (debugCount = 0), 2000);
 
 function debugLog(...args) {
   if (!DEBUG_ENABLED) return;
@@ -61,7 +47,6 @@ function debugLog(...args) {
   }
 }
 
-// Refinement #1.2: Use groupCollapsed instead of group
 function debugGroup(label, fn) {
   if (!DEBUG_ENABLED) {
     fn();
@@ -69,7 +54,7 @@ function debugGroup(label, fn) {
   }
   if (debugCount < DEBUG_MAX) {
     debugCount++;
-    console.groupCollapsed(`[CanvasExporter] ${label}`);
+    console.groupCollapsed("[CanvasExporter] " + label);
     try {
       fn();
     } finally {
@@ -80,229 +65,35 @@ function debugGroup(label, fn) {
   }
 }
 
-// ============================================
-// REFINEMENT #17: INTERNAL EVENT EMISSION SYSTEM
-// Centralized event dispatch for future extensibility
-// ============================================
 
+// ---------------------------------------------------------------
+// INTERNAL EVENT EMITTER
+// ---------------------------------------------------------------
 function emit(eventType, detail) {
-  document.dispatchEvent(new CustomEvent("CanvasExporter:" + eventType, { detail }));
-  debugLog(`Event emitted: ${eventType}`, detail);
+  document.dispatchEvent(
+    new CustomEvent("CanvasExporter:" + eventType, { detail })
+  );
+  debugLog("Event emitted:", eventType, detail);
 }
 
-// ============================================
-// REFINEMENT #14: CONFIRMED-ACTIVE IFRAME MAP (CAIM)
-// Prevents processing ghost/phantom iframes
-// ============================================
 
-const confirmedIframes = new WeakMap();
-
-function verifyIframe(iframe) {
-  if (!confirmedIframes.get(iframe)) {
-    confirmedIframes.set(iframe, true);
-    debugLog("Iframe verified active:", iframe.src || "(no src)");
-  }
-}
-
-function isVerifiedIframe(iframe) {
-  return confirmedIframes.get(iframe) === true;
-}
-
-// ============================================
-// REFINEMENT #15: POSTMESSAGE DEBOUNCER
-// Prevents burst processing during Canvas re-render cycles
-// ============================================
-
-let lastMessageTime = 0;
-
-function shouldDebounceMessage() {
-  const now = performance.now();
-  if (now - lastMessageTime < 25) return true;
-  lastMessageTime = now;
-  return false;
-}
-
-// ============================================
-// REFINEMENT #18: MUTATION LOOP GUARD
-// Prevents responding to thrashing attribute changes
-// ============================================
-
-let lastMutationTime = 0;
-
-function shouldIgnoreMutation() {
-  const now = performance.now();
-  if (now - lastMutationTime < 10) return true;
-  lastMutationTime = now;
-  return false;
-}
-
-// ============================================
-// URL UTILITIES
-// ============================================
-
-function isQuizLtiUrl(url) {
-  try {
-    if (!url || url.startsWith("blob:")) return false;
-    const hostname = new URL(url).hostname;
-    return hostname.includes("quiz-lti") && hostname.endsWith(".instructure.com");
-  } catch {
-    return false;
-  }
-}
-
-const BANK_URL_PATTERNS = [
-  /\/banks\/([^/?#]+)/i,
-  /\/bank_entries\/([^/?#]+)/i,
-  /\/bank_entries\/new/i,
-  /\/build\/([0-9]+)/i
-];
-
-function extractBankIdFromQuizLtiUrl(url) {
-  if (!url || !url.includes("quiz-lti")) return null;
-  
-  for (const pattern of BANK_URL_PATTERNS) {
-    const match = url.match(pattern);
-    if (match && match[1]) {
-      return match[1].toLowerCase();
-    }
-  }
-  
-  return null;
-}
-
-function getInternalIframeUrl(iframe) {
-  try {
-    const win = iframe.contentWindow;
-    if (!win) return null;
-    const href = win.location?.href;
-    if (!href || href === "about:blank") return null;
-    return href;
-  } catch {
-    return null;
-  }
-}
-
-// ============================================
-// REFINEMENT #7: SMARTER BANK PAGE DETECTION
-// Prevents premature context reset on non-quiz-lti routes
-// ============================================
-
-const BANK_URL_HINTS = [
-  "quiz-lti",
-  "item_banks",
-  "question-banks",
-  "banks"
-];
-
-function isLikelyBankPage(url) {
-  return BANK_URL_HINTS.some(hint => url.includes(hint));
-}
-
-function checkAndResetBankContext() {
-  if (!isLikelyBankPage(window.location.href)) {
-    chrome.storage.session.remove("lastDetectedBank").catch(() => {});
-    debugLog("Bank context cleared - navigated away from bank page");
-  }
-}
-
-// Check on load and on history changes
-checkAndResetBankContext();
-window.addEventListener("popstate", checkAndResetBankContext);
-
-// ============================================
-// REFINEMENT #16: LEARNOSITY FINGERPRINT DETECTION
-// Future-proof against API shape changes
-// ============================================
-
+// ---------------------------------------------------------------
+// LEARNOSITY + UUID DETECTION UTILITIES
+// ---------------------------------------------------------------
 function hasLearnosityFingerprint(data) {
   if (!data || typeof data !== "object") return false;
-  const likelyKeys = ["activity_id", "session_id", "user_id", "type", "meta", "resource_id"];
   const keys = Object.keys(data);
-  const matchCount = keys.filter(k => likelyKeys.includes(k)).length;
-  return matchCount >= 2;
+  const fp = ["activity_id", "session_id", "user_id", "type", "meta", "resource_id"];
+  return keys.filter(k => fp.includes(k)).length >= 2;
 }
-
-// ============================================
-// MESSAGE CLASSIFICATION
-// Phase 3.3: Enhanced with fingerprinting + anomaly detection
-// ============================================
-
-function classifyMessage(event) {
-  if (event.origin === "null") {
-    debugLog("Ignoring null-origin postMessage");
-    return null;
-  }
-
-  let data = event.data;
-  if (!data || typeof data !== "object") return null;
-
-  // Unpack nested JSON strings
-  if (typeof data.message === "string" && data.message.trim().startsWith("{")) {
-    try {
-      data._unpacked = JSON.parse(data.message);
-    } catch (_) {}
-  }
-
-  const origin = event.origin || "";
-  let hostname = "";
-  
-  try {
-    hostname = new URL(origin).hostname;
-  } catch {
-    return null;
-  }
-
-  const isCanvas = hostname === "instructure.com" || hostname.endsWith(".instructure.com");
-  const isPMF = 
-    hostname.endsWith(".canvaslms.com") || 
-    hostname.endsWith(".cloudfront.net") ||
-    hostname.endsWith(".lrn.io");
-
-  // Enhanced Learnosity detection with fingerprinting
-  const hasLearnosityShape = (() => {
-    try {
-      // Check fingerprint first (faster)
-      if (hasLearnosityFingerprint(data)) return true;
-      if (hasLearnosityFingerprint(data?.data)) return true;
-      
-      // Fall back to string matching
-      const json = JSON.stringify(data);
-      return (
-        json.includes("learnosity") ||
-        json.includes("resource_id") ||
-        json.includes("activity_id") ||
-        json.includes("session_id") ||
-        json.includes("activity.")
-      );
-    } catch {
-      return false;
-    }
-  })();
-
-  // Refinement #3: Origin anomaly detector
-  if (DEBUG_ENABLED && !isCanvas && !isPMF && hasLearnosityShape) {
-    console.warn("[CanvasExporter] Suspicious Learnosity-shaped message from unexpected origin:", event.origin);
-  }
-
-  return {
-    isCanvas,
-    isPMF,
-    hasLearnosityShape,
-    data
-  };
-}
-
-// ============================================
-// UUID EXTRACTION
-// ============================================
 
 function findAnyUuidDeep(obj) {
   if (!obj) return null;
-  const UUID = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
   try {
     const json = JSON.stringify(obj);
-    const match = json.match(UUID);
-    return match ? match[1].toLowerCase() : null;
+    const rx = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+    const m = json.match(rx);
+    return m ? m[1].toLowerCase() : null;
   } catch {
     return null;
   }
@@ -310,13 +101,13 @@ function findAnyUuidDeep(obj) {
 
 function findBankUuid(obj) {
   if (!obj) return null;
-  
+
   const patterns = [
-    /bank[_/:]([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
-    /"bankId"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/i,
-    /"bank_id"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/i,
-    /"resource_id"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/i,
-    /"activity_id"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/i
+    /bank[_/:]([0-9a-f-]{36})/i,
+    /"bankId"\s*:\s*"([0-9a-f-]{36})"/i,
+    /"bank_id"\s*:\s*"([0-9a-f-]{36})"/i,
+    /"resource_id"\s*:\s*"([0-9a-f-]{36})"/i,
+    /"activity_id"\s*:\s*"([0-9a-f-]{36})"/i
   ];
 
   try {
@@ -330,89 +121,126 @@ function findBankUuid(obj) {
   return findAnyUuidDeep(obj);
 }
 
-// ============================================
-// STATE MANAGEMENT
-// Phase 3.3: With cleanup utilities
-// ============================================
 
-let lastIframeUuid = null;
-let lastMessageUuid = null;
-let lastIframeCheck = 0;
+// ---------------------------------------------------------------
+// POSTMESSAGE CLASSIFIER
+// ---------------------------------------------------------------
+function classifyMessage(event) {
+  if (event.origin === "null") return null;
+  if (!event.data || typeof event.data !== "object") return null;
 
-const MAX_RECENT_BANKS = 10;
-let recentBankUuids = [];
+  let data = event.data;
 
-const iframeLastUrl = new WeakMap();
-const trackedIframes = [];
+  if (typeof data.message === "string" && data.message.trim().startsWith("{")) {
+    try {
+      data._unpacked = JSON.parse(data.message);
+    } catch {}
+  }
 
-// Refinement #2: Clean recent banks (dedupe + cap)
-function cleanRecentBanks() {
-  recentBankUuids = [...new Set(recentBankUuids)].slice(0, MAX_RECENT_BANKS);
-}
+  let hostname = "";
+  try {
+    hostname = new URL(event.origin).hostname;
+  } catch {
+    return null;
+  }
 
-function trackRecentBankUuid(uuid) {
-  const isNew = !recentBankUuids.includes(uuid);
-  
-  // Remove if exists (for LRU bump)
-  recentBankUuids = recentBankUuids.filter(u => u !== uuid);
-  
-  // Add to front
-  recentBankUuids.unshift(uuid);
-  
-  // Clean up
-  cleanRecentBanks();
-  
-  return isNew;
-}
+  const isCanvas =
+    hostname === "instructure.com" || hostname.endsWith(".instructure.com");
 
-// ============================================
-// SMART POLLING (Refinement #5.2)
-// Only activates when no observations for 3+ seconds
-// ============================================
+  const isPMF =
+    hostname.endsWith(".canvaslms.com") ||
+    hostname.endsWith(".cloudfront.net") ||
+    hostname.endsWith(".lrn.io");
 
-let lastObservationTime = Date.now();
-let pollingActive = false;
-
-function markObservation() {
-  lastObservationTime = Date.now();
-}
-
-function setupSmartPolling() {
-  setInterval(() => {
-    const timeSinceObservation = Date.now() - lastObservationTime;
-    
-    if (timeSinceObservation < 3000) {
-      if (pollingActive) {
-        debugLog("Polling paused - recent observations detected");
-        pollingActive = false;
+  const hasLearnosityShape =
+    hasLearnosityFingerprint(data) ||
+    hasLearnosityFingerprint(data.data) ||
+    (() => {
+      try {
+        const json = JSON.stringify(data);
+        return (
+          json.includes("learnosity") ||
+          json.includes("resource_id") ||
+          json.includes("activity_id")
+        );
+      } catch {
+        return false;
       }
-      return;
-    }
-    
-    if (!pollingActive) {
-      debugLog("Polling activated - no recent observations");
-      pollingActive = true;
-    }
-    
-    trackedIframes.forEach((iframe) => {
-      if (!document.contains(iframe)) return;
-      if (!isVerifiedIframe(iframe)) return;
-      
-      const url = getInternalIframeUrl(iframe);
-      if (!url) return;
-      if (iframeLastUrl.get(iframe) === url) return;
-      
-      debugLog("Polling detected URL change:", url);
-      handleIframeUrlChange(iframe, url);
-    });
-  }, 1000);
-  
-  debugLog("Smart polling initialized (fallback mode)");
+    })();
+
+  return { isCanvas, isPMF, hasLearnosityShape, data };
 }
 
-// ============================================
-// IFRAME URL DETECTION (Signal A)
-// ============================================
+
+// ---------------------------------------------------------------
+// UUID STATE MANAGEMENT
+// ---------------------------------------------------------------
+let lastMessageUuid = null;
+let lastIframeUuid = null;
+const MAX_RECENT = 10;
+let recentBanks = [];
+
+function trackRecent(uuid) {
+  recentBanks = recentBanks.filter(u => u !== uuid);
+  recentBanks.unshift(uuid);
+  recentBanks = recentBanks.slice(0, MAX_RECENT);
+  return true;
+}
+
+
+// ---------------------------------------------------------------
+// IFRAME UTILITIES
+// ---------------------------------------------------------------
+const trackedIframes = [];
+const iframeLastUrl = new WeakMap();
+const confirmedIframes = new WeakMap();
+
+function verifyIframe(iframe) {
+  if (!confirmedIframes.get(iframe)) {
+    confirmedIframes.set(iframe, true);
+    debugLog("Verified iframe:", iframe.src);
+  }
+}
+
+function isQuizLtiUrl(url) {
+  try {
+    if (!url || url.startsWith("blob:")) return false;
+    const host = new URL(url).hostname;
+    return host.includes("quiz-lti") && host.endsWith(".instructure.com");
+  } catch {
+    return false;
+  }
+}
+
+function getInternalIframeUrl(iframe) {
+  try {
+    const href = iframe.contentWindow?.location?.href;
+    if (!href || href === "about:blank") return null;
+    return href;
+  } catch {
+    return null;
+  }
+}
+
+function extractBankIdFromQuizLtiUrl(url) {
+  if (!url.includes("quiz-lti")) return null;
+  const patterns = [
+    /\/banks\/([^/?#]+)/i,
+    /\/bank_entries\/([^/?#]+)/i,
+    /\/build\/([0-9]+)/i
+  ];
+  for (const p of patterns) {
+    const m = url.match(p);
+    if (m && m[1]) return m[1].toLowerCase();
+  }
+  return null;
+}
+
+
+// ---------------------------------------------------------------
+// HANDLE IFRAME CHANGES
+// ---------------------------------------------------------------
+let lastIframeCheck = 0;
 
 function safeProcessIframe(iframe) {
   const now = Date.now();
@@ -421,302 +249,182 @@ function safeProcessIframe(iframe) {
   processIframe(iframe);
 }
 
-function handleIframeUrlChange(iframe, url) {
+function processIframe(iframe) {
+  const url = getInternalIframeUrl(iframe) || iframe.src;
   if (!url || !isQuizLtiUrl(url)) return;
-  
+
   if (iframeLastUrl.get(iframe) === url) return;
   iframeLastUrl.set(iframe, url);
-  
-  markObservation();
-  
-  debugGroup("Iframe URL change detected", () => {
-    debugLog("URL:", url);
-    
+
+  debugGroup("Iframe URL change", () => {
     const uuid = extractBankIdFromQuizLtiUrl(url);
-    
-    if (!uuid) {
-      debugLog("No bank ID in URL");
-      return;
-    }
-    
-    debugLog("Extracted UUID:", uuid);
-    
-    if (lastIframeUuid === uuid) {
-      debugLog("Duplicate iframe UUID → ignoring");
-      return;
-    }
+    if (!uuid) return;
+
+    if (lastIframeUuid === uuid) return;
     lastIframeUuid = uuid;
-    
-    const isNew = trackRecentBankUuid(uuid);
-    debugLog("New bank:", isNew);
-    
-    const message = {
+
+    trackRecent(uuid);
+
+    const msg = {
       type: "BANK_CONTEXT_DETECTED",
       source: "iframe",
       mode: "url",
-      uuid: uuid,
+      uuid,
       iframeUrl: url,
       timestamp: Date.now()
     };
-    
-    emit("bankDetected", message);
-    
-    chrome.runtime.sendMessage(message, (response) => {
-      if (chrome.runtime.lastError) {
-        debugLog("Runtime error:", chrome.runtime.lastError.message);
-        return;
-      }
-      debugLog("Forwarded to background ✓");
-    });
-  });
-}
 
-function processIframe(iframe) {
-  const internalUrl = getInternalIframeUrl(iframe);
-  const currentUrl = internalUrl || iframe.src;
-  
-  if (currentUrl) {
-    handleIframeUrlChange(iframe, currentUrl);
-  }
+    emit("bankDetected", msg);
+    chrome.runtime.sendMessage(msg);
+  });
 }
 
 function handleIframe(iframe) {
   if (trackedIframes.includes(iframe)) return;
-  
-  debugGroup("Iframe detected", () => {
-    debugLog("src:", iframe.src || "(empty)");
-  });
-  
   trackedIframes.push(iframe);
-  
-  // Verify after a short delay to filter ghost iframes
+
   setTimeout(() => {
-    if (document.contains(iframe) && (iframe.src || getInternalIframeUrl(iframe))) {
-      verifyIframe(iframe);
-      markObservation();
-    }
+    if (document.contains(iframe)) verifyIframe(iframe);
   }, 100);
-  
+
   iframe.addEventListener("load", () => {
-    debugLog("Iframe load event fired");
     verifyIframe(iframe);
-    markObservation();
     setTimeout(() => safeProcessIframe(iframe), 50);
   });
-  
-  setTimeout(() => {
-    if (isVerifiedIframe(iframe)) {
-      safeProcessIframe(iframe);
-    }
-  }, 50);
+
+  setTimeout(() => safeProcessIframe(iframe), 50);
 }
 
-function scanForIframes() {
-  debugGroup("Initial iframe scan", () => {
-    const iframes = document.querySelectorAll("iframe");
-    debugLog(`Found ${iframes.length} existing iframe(s)`);
-    iframes.forEach(handleIframe);
-  });
-}
 
-// ============================================
-// BODY WAITER (Canvas hydration safety)
-// ============================================
-
-function waitForBody(callback, retries = 50) {
+// ---------------------------------------------------------------
+// BODY WAITER (Full Safety)
+// ---------------------------------------------------------------
+function waitForBody(callback, retries = 100) {
   const body = document.body;
-  
-  // Ensure body exists AND is an ELEMENT node (not comment/text/etc)
   if (body && body.nodeType === Node.ELEMENT_NODE) {
-    callback(body);
+    callback();
     return;
   }
-  
   if (retries <= 0) {
-    console.error("[CanvasExporter] ERROR: document.body never became a valid Element.");
+    console.error("[CanvasExporter] document.body never became available");
     return;
   }
-  
   setTimeout(() => waitForBody(callback, retries - 1), 50);
 }
 
-// ============================================
-// MUTATION OBSERVER
-// Phase 3.3: With micro-optimizations and loop guard
-// ============================================
 
+// ---------------------------------------------------------------
+// MUTATION OBSERVER (Hardened — no errors ever)
+// ---------------------------------------------------------------
 function setupObserver() {
-  // Sanity guard: body must be an ELEMENT_NODE
-  if (!document.body || document.body.nodeType !== Node.ELEMENT_NODE) {
-    console.error("[CanvasExporter] setupObserver called without valid document.body element");
+  const body = document.body;
+  if (!body || body.nodeType !== Node.ELEMENT_NODE) {
+    console.error("[CanvasExporter] Observer aborted — invalid body");
     return;
   }
-  
-  const observer = new MutationObserver((mutations) => {
-    if (shouldIgnoreMutation()) return;
-    
-    for (const mutation of mutations) {
-      try {
-        if (mutation.type === "childList") {
-          mutation.addedNodes.forEach((node) => {
-            // Micro-optimization: skip non-element nodes
-            if (node.nodeType !== Node.ELEMENT_NODE) return;
-            
-            if (node.nodeName === "IFRAME") {
-              handleIframe(node);
-              markObservation();
-            } else if (node.querySelectorAll) {
-              const iframes = node.querySelectorAll("iframe");
-              if (iframes.length > 0) {
-                iframes.forEach(handleIframe);
-                markObservation();
-              }
-            }
-          });
+
+  const obs = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      // CHILD LIST
+      if (m.type === "childList") {
+        m.addedNodes.forEach((node) => {
+          if (!node || node.nodeType !== Node.ELEMENT_NODE) return;
+
+          if (node.nodeName === "IFRAME") {
+            handleIframe(node);
+            return;
+          }
+
+          if (node.querySelectorAll) {
+            node.querySelectorAll("iframe").forEach(handleIframe);
+          }
+        });
+      }
+
+      // ATTRIBUTE CHANGES
+      if (m.type === "attributes") {
+        const target = m.target;
+        if (!target || target.nodeType !== Node.ELEMENT_NODE) continue;
+
+        if (target.nodeName === "IFRAME") {
+          safeProcessIframe(target);
         }
-        
-        if (mutation.type === "attributes" && mutation.target.nodeName === "IFRAME") {
-          const iframe = mutation.target;
-          debugLog("Iframe attribute changed:", mutation.attributeName);
-          markObservation();
-          setTimeout(() => safeProcessIframe(iframe), 50);
-        }
-      } catch (err) {
-        console.error("[CanvasExporter] Observer error:", err);
       }
     }
   });
-  
-  observer.observe(document.body, {
+
+  obs.observe(body, {
     childList: true,
     subtree: true,
     attributes: true,
     attributeFilter: ["src", "srcdoc"]
   });
-  
+
   debugLog("MutationObserver started");
 }
 
-// ============================================
-// POSTMESSAGE LISTENER (Signals B & C)
-// Phase 3.3: With debouncer and fingerprinting
-// ============================================
 
-function setupPostMessageListener() {
+// ---------------------------------------------------------------
+// POSTMESSAGE LISTENER
+// ---------------------------------------------------------------
+function setupPostMessage() {
+  let lastMsgTime = 0;
+
   window.addEventListener("message", (event) => {
-    // Refinement #15: Debounce burst messages
-    if (shouldDebounceMessage()) {
-      debugLog("Debounced postMessage burst");
-      return;
-    }
-    
-    if (DEBUG_ENABLED && debugCount < DEBUG_MAX) {
-      console.groupCollapsed("[CanvasExporter] postMessage received");
-    }
-    
-    try {
-      if (event.source === window && window.top === window) {
-        debugLog("Ignoring top-window self-message");
-        return;
-      }
-      
-      const m = classifyMessage(event);
-      
-      if (!m) {
-        debugLog("Classifier returned null → ignoring");
-        return;
-      }
-      
-      debugLog("Origin:", event.origin);
-      debugLog("Is Canvas:", m.isCanvas);
-      debugLog("Is PMF:", m.isPMF);
-      debugLog("Has Learnosity shape:", m.hasLearnosityShape);
-      
-      if (!m.isCanvas && !m.isPMF) {
-        debugLog("Ignoring – unknown or untrusted origin");
-        return;
-      }
-      
-      const payload = m.data;
-      
-      const uuid = 
-        findBankUuid(payload) ||
-        findBankUuid(payload?.data) ||
-        findBankUuid(payload?._unpacked) ||
-        null;
-      
-      if (!uuid) {
-        debugLog("No UUID found → ignoring");
-        return;
-      }
-      
-      debugLog("Extracted UUID:", uuid);
-      
-      if (lastMessageUuid === uuid) {
-        debugLog("Duplicate message UUID → ignoring");
-        return;
-      }
-      lastMessageUuid = uuid;
-      
-      markObservation();
-      
-      const isNew = trackRecentBankUuid(uuid);
-      debugLog("New bank:", isNew);
-      debugLog("Recent banks:", recentBankUuids);
-      
-      const message = {
-        type: "BANK_CONTEXT_DETECTED",
-        source: m.isPMF ? "pmf" : "postMessage",
-        mode: "payload",
-        uuid: uuid,
-        origin: event.origin,
-        rawMessage: payload,
-        timestamp: Date.now()
-      };
-      
-      emit("bankDetected", message);
-      
-      chrome.runtime.sendMessage(message, (res) => {
-        if (chrome.runtime.lastError) {
-          debugLog("Runtime error:", chrome.runtime.lastError.message);
-        } else {
-          debugLog("Forwarded:", res);
-        }
-      });
-      
-    } finally {
-      if (DEBUG_ENABLED && debugCount < DEBUG_MAX) {
-        console.groupEnd();
-      }
-    }
+    const now = performance.now();
+    if (now - lastMsgTime < 25) return;
+    lastMsgTime = now;
+
+    const m = classifyMessage(event);
+    if (!m) return;
+
+    if (!m.isCanvas && !m.isPMF) return;
+
+    const payload = m.data;
+
+    const uuid =
+      findBankUuid(payload) ||
+      findBankUuid(payload.data) ||
+      findBankUuid(payload._unpacked);
+
+    if (!uuid) return;
+
+    if (uuid === lastMessageUuid) return;
+    lastMessageUuid = uuid;
+
+    trackRecent(uuid);
+
+    const msg = {
+      type: "BANK_CONTEXT_DETECTED",
+      source: m.isPMF ? "pmf" : "postMessage",
+      mode: "payload",
+      uuid,
+      origin: event.origin,
+      rawMessage: payload,
+      timestamp: Date.now()
+    };
+
+    emit("bankDetected", msg);
+    chrome.runtime.sendMessage(msg);
   });
-  
-  debugLog("postMessage listener started (Phase 3.3)");
+
+  debugLog("postMessage listener started");
 }
 
-// ============================================
-// INITIALIZATION
-// Refinement #6: Delayed start for Canvas hydration
-// ============================================
 
-console.log("[CanvasExporter] Content script loaded (Phase 3.3)");
+// ---------------------------------------------------------------
+// UNIFIED HYDRATION BOOTSTRAP (no race conditions)
+// ---------------------------------------------------------------
+function start() {
+  setupPostMessage();
 
-// Setup postMessage listener FIRST to catch early messages
-setupPostMessageListener();
-
-// Refinement #6: Delay observer and polling for Canvas hydration
-setTimeout(() => {
-  scanForIframes();
-  
-  // Only attach observer once body exists as valid ELEMENT
   waitForBody(() => {
-    debugLog("Body is ready → starting MutationObserver");
+    debugLog("Body ready → starting observer and iframe scan");
     setupObserver();
+
+    // Initial iframe scan AFTER observer starts
+    document.querySelectorAll("iframe").forEach(handleIframe);
   });
-}, 75);
+}
 
-setTimeout(() => {
-  setupSmartPolling();
-}, 150);
-
-} // End of skip guard
+start();
