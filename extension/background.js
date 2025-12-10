@@ -1,16 +1,14 @@
-// ============================================================================
-// Phase 3.4 Background
-// ============================================================================
-
 let currentBank = null;
 
-chrome.runtime.onMessage.addListener((msg, sender, reply) => {
-  if (msg.type === "CANVAS_EXPORTER_BANK") {
-    currentBank = msg.bank;
-    console.log("[CanvasExporter Background] Bank updated:", currentBank);
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === "BANK_CONTEXT_DETECTED") {
+    currentBank = msg.uuid;
+    chrome.storage.local.set({ currentBank });
   }
+});
 
-  if (msg.type === "CANVAS_EXPORTER_GET_BANK") {
-    reply({ bank: currentBank });
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === "POPUP_REQUEST_BANK") {
+    sendResponse({ currentBank });
   }
 });
