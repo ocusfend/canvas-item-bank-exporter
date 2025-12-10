@@ -18,9 +18,11 @@
       "matches": ["*://*.instructure.com/*"],
       "js": ["content-script.js"],
       "run_at": "document_start",
-      "all_frames": false
+      "all_frames": true,
+      "world": "MAIN"
     }
-  ],
+  ]
+
 
   "action": {
     "default_popup": "popup.html",
