@@ -11,22 +11,27 @@ const authText = document.getElementById('auth-text');
 
 let currentBankId = null;
 
-function updateAuthStatus(hasAuth, domain) {
-  if (hasAuth) {
+function updateAuthStatus(hasAuth, count, domains) {
+  if (hasAuth && count > 0) {
     authStatus.classList.remove('pending');
     authStatus.classList.add('authenticated');
-    authText.textContent = domain ? `Authenticated (${new URL(domain).hostname})` : 'Token captured ✓';
+    const domainList = domains?.map(d => {
+      try { return new URL(d).hostname; } catch { return d; }
+    }).join(', ') || '';
+    authText.textContent = `${count} token${count > 1 ? 's' : ''} captured`;
+    authText.title = domainList; // Show domains on hover
   } else {
     authStatus.classList.remove('authenticated');
     authStatus.classList.add('pending');
     authText.textContent = 'No auth token captured';
+    authText.title = '';
   }
 }
 
 function refresh() {
   chrome.runtime.sendMessage({ type: "REQUEST_BANK" }, (response) => {
-    // Update auth status
-    updateAuthStatus(response?.hasAuth, response?.authDomain);
+    // Update auth status with count and domains
+    updateAuthStatus(response?.hasAuth, response?.authCount, response?.authDomains);
     
     if (response?.bank?.id) {
       currentBankId = response.bank.id;
