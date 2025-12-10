@@ -60,18 +60,18 @@
     return null;
   }
 
-  // -------- AUTH HEADER CAPTURE --------
-  let lastSentAuth = null;
+  // -------- LAUNCH TOKEN CAPTURE --------
+  let lastSentToken = null;
 
-  function emitAuthHeader(authorization, apiDomain) {
-    const key = `${apiDomain}:${authorization.slice(0, 20)}`;
-    if (lastSentAuth === key) return;
-    lastSentAuth = key;
+  function emitLaunchToken(launchToken, apiDomain) {
+    const key = `${apiDomain}:${launchToken.slice(0, 20)}`;
+    if (lastSentToken === key) return;
+    lastSentToken = key;
 
-    console.log("%c[CanvasExporter] Auth header captured for:", "color:#4caf50;font-weight:bold", apiDomain);
+    console.log("%c[CanvasExporter] Launch token captured for:", "color:#4caf50;font-weight:bold", apiDomain);
 
     window.dispatchEvent(new CustomEvent("CanvasExporter_AuthDetected", {
-      detail: { authorization, apiDomain }
+      detail: { launchToken, apiDomain }
     }));
   }
 
@@ -82,23 +82,14 @@
     const bank = tryParseBank(url);
     if (bank) sendBank(bank);
 
-    // Capture auth headers from Canvas's own API calls to quiz-api
-    if (url.includes('quiz-api') || url.includes('/api/')) {
+    // Capture launch_token from URL parameters
+    if (url.includes('quiz-api') || url.includes('quiz-lti')) {
       try {
-        let authHeader = null;
+        const urlObj = new URL(url, window.location.origin);
+        const launchToken = urlObj.searchParams.get('launch_token');
         
-        // Check Headers object
-        if (init?.headers instanceof Headers) {
-          authHeader = init.headers.get('Authorization');
-        }
-        // Check plain object
-        else if (init?.headers) {
-          authHeader = init.headers['Authorization'] || init.headers['authorization'];
-        }
-        
-        if (authHeader && authHeader.startsWith('Bearer ')) {
-          const apiDomain = new URL(url, window.location.origin).origin;
-          emitAuthHeader(authHeader, apiDomain);
+        if (launchToken) {
+          emitLaunchToken(launchToken, urlObj.origin);
         }
       } catch (e) {
         // Ignore URL parsing errors
@@ -107,7 +98,7 @@
 
     return origFetch.apply(this, arguments);
   };
-  console.log("[CanvasExporter] fetch() patched with auth capture");
+  console.log("[CanvasExporter] fetch() patched with launch token capture");
 
   // -------- XHR PATCH --------
   const origOpen = XMLHttpRequest.prototype.open;

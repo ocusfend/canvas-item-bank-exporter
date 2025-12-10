@@ -77,19 +77,18 @@ let capturedAuth = null;
 
 // ========== AUTHENTICATED FETCH (CORS-free from background) ==========
 async function authenticatedFetch(url) {
-  const headers = {
-    'Accept': 'application/json',
-  };
+  const urlObj = new URL(url);
   
-  if (capturedAuth?.authorization) {
-    headers['Authorization'] = capturedAuth.authorization;
+  // Add launch_token to the URL if we have one
+  if (capturedAuth?.launchToken) {
+    urlObj.searchParams.set('launch_token', capturedAuth.launchToken);
   }
   
-  debugLog("FETCH", `Auth fetch: ${url}`);
+  debugLog("FETCH", `Auth fetch: ${urlObj.toString()}`);
   
-  const response = await fetch(url, {
+  const response = await fetch(urlObj.toString(), {
     method: 'GET',
-    headers,
+    headers: { 'Accept': 'application/json' },
     mode: 'cors',
     credentials: 'omit'
   });
@@ -116,20 +115,19 @@ async function authenticatedPaginatedFetch(baseUrl) {
   const results = [];
   let url = baseUrl;
   
-  const headers = {
-    'Accept': 'application/json',
-  };
-  
-  if (capturedAuth?.authorization) {
-    headers['Authorization'] = capturedAuth.authorization;
-  }
-  
   while (url) {
-    debugLog("FETCH", `Paginated fetch: ${url}`);
+    const urlObj = new URL(url);
     
-    const response = await fetch(url, {
+    // Add launch_token to the URL if we have one
+    if (capturedAuth?.launchToken) {
+      urlObj.searchParams.set('launch_token', capturedAuth.launchToken);
+    }
+    
+    debugLog("FETCH", `Paginated fetch: ${urlObj.toString()}`);
+    
+    const response = await fetch(urlObj.toString(), {
       method: 'GET',
-      headers,
+      headers: { 'Accept': 'application/json' },
       mode: 'cors',
       credentials: 'omit'
     });
@@ -164,10 +162,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     case "AUTH_DETECTED":
       capturedAuth = {
-        authorization: msg.authorization,
+        launchToken: msg.launchToken,
         apiDomain: msg.apiDomain
       };
-      debugLog("AUTH", `Auth token captured for ${msg.apiDomain}`);
+      debugLog("AUTH", `Launch token captured for ${msg.apiDomain}`);
       break;
 
     case "REQUEST_BANK":
