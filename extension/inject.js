@@ -304,9 +304,13 @@
         console.log("%c[CanvasExporter] Cached response for:", "color:#00bcd4", url.slice(0, 100));
         
         // Also cache individual entries from list responses immediately
-        if (url.includes('/bank_entries') && Array.isArray(data)) {
-          cacheIndividualEntries(url, data);
-          console.log("%c[CanvasExporter] Pre-cached", "color:#00bcd4", data.length, "individual entries");
+        // Handle both array responses and {total, entries: [...]} object responses
+        if (url.includes('/bank_entries')) {
+          const entriesArray = data.entries || (Array.isArray(data) ? data : null);
+          if (entriesArray && entriesArray.length > 0) {
+            cacheIndividualEntries(url, entriesArray);
+            console.log("%c[CanvasExporter] Pre-cached", "color:#00bcd4", entriesArray.length, "individual entries from", url.includes('search') ? 'search' : 'list');
+          }
         }
       } catch (e) {
         // Ignore cache errors
@@ -376,7 +380,11 @@
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       
       const data = await response.json();
-      results.push(...(Array.isArray(data) ? data : [data]));
+      // Handle Canvas bank_entries response format: {total, entries: [...]}
+      const items = data.entries || (Array.isArray(data) ? data : [data]);
+      results.push(...items);
+      
+      console.log("%c[CanvasExporter] Paginated fetch got", "color:#00bcd4", items.length, "items from", url.slice(0, 80));
       
       const linkHeader = response.headers.get('Link');
       const links = parseLinkHeader(linkHeader);
