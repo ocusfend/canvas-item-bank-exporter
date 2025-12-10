@@ -520,11 +520,33 @@ function scanForIframes() {
 }
 
 // ============================================
+// BODY WAITER (Canvas hydration safety)
+// ============================================
+
+function waitForBody(callback, retries = 20) {
+  if (document.body) {
+    callback();
+    return;
+  }
+  if (retries <= 0) {
+    console.error("[CanvasExporter] ERROR: document.body never arrived.");
+    return;
+  }
+  setTimeout(() => waitForBody(callback, retries - 1), 50);
+}
+
+// ============================================
 // MUTATION OBSERVER
 // Phase 3.3: With micro-optimizations and loop guard
 // ============================================
 
 function setupObserver() {
+  // Sanity guard for document.body
+  if (!document.body) {
+    console.error("[CanvasExporter] setupObserver called without document.body");
+    return;
+  }
+  
   const observer = new MutationObserver((mutations) => {
     if (shouldIgnoreMutation()) return;
     
@@ -680,7 +702,11 @@ setupPostMessageListener();
 // Refinement #6: Delay observer and polling for Canvas hydration
 setTimeout(() => {
   scanForIframes();
-  setupObserver();
+  
+  // Only attach observer once body exists
+  waitForBody(() => {
+    setupObserver();
+  });
 }, 75);
 
 setTimeout(() => {
