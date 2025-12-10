@@ -1,5 +1,5 @@
 import { 
-  apiFetch, trySequential, paginatedFetch, asyncPool,
+  asyncPool,
   isSupported, generateItemXML, generateManifestXML, generateAssessmentXML,
   sanitizeFilename, sanitizeIdentifier, validateXML, debugLog,
   normalizeApiBase, API_BASE_CANDIDATES, summarizeSkippedItems, generateSkippedReport
@@ -28,6 +28,46 @@ async function loadJSZip() {
     debugLog("ERR", jsZipLoadError.message);
     throw jsZipLoadError;
   }
+}
+
+// ========== TAB-BASED API FETCH (via content script) ==========
+async function apiFetchViaTab(tabId, url) {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tabId, { type: "FETCH_API", url }, response => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else if (response?.success) {
+        resolve(response.data);
+      } else {
+        reject(new Error(response?.error || "Fetch failed"));
+      }
+    });
+  });
+}
+
+async function paginatedFetchViaTab(tabId, url) {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tabId, { type: "FETCH_PAGINATED", url }, response => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else if (response?.success) {
+        resolve(response.data);
+      } else {
+        reject(new Error(response?.error || "Fetch failed"));
+      }
+    });
+  });
+}
+
+async function trySequentialViaTab(tabId, fetchers) {
+  for (const fetcher of fetchers) {
+    try {
+      return await fetcher(tabId);
+    } catch (e) {
+      continue;
+    }
+  }
+  throw new Error("All API endpoints failed");
 }
 
 // ========== STATE ==========
@@ -79,7 +119,7 @@ function sendError(tabId, error) {
 }
 
 // ========== API BASE RESOLUTION ==========
-async function resolveApiBase(bankId) {
+async function resolveApiBase(tabId, bankId) {
   if (detectedApiBase) {
     debugLog("API", `Using detected base: ${detectedApiBase}`);
     return detectedApiBase;
@@ -92,23 +132,10 @@ async function resolveApiBase(bankId) {
       const testUrl = `${candidate}banks/${bankId}`;
       debugLog("API", `Probing: ${testUrl}`);
       
-      // Use GET with timeout instead of HEAD (some Canvas endpoints reject HEAD)
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000);
-      
-      const response = await fetch(testUrl, { 
-        credentials: 'include', 
-        mode: 'cors',
-        signal: controller.signal
-      });
-      
-      clearTimeout(timeoutId);
-      
-      if (response.ok) {
-        debugLog("API", `Found working base: ${candidate}`);
-        detectedApiBase = candidate;
-        return candidate;
-      }
+      await apiFetchViaTab(tabId, testUrl);
+      debugLog("API", `Found working base: ${candidate}`);
+      detectedApiBase = candidate;
+      return candidate;
     } catch (e) {
       continue;
     }
@@ -122,24 +149,29 @@ async function resolveApiBase(bankId) {
 async function exportBank(bankId, tabId) {
   console.time("export");
   
+  if (!tabId) {
+    sendError(null, "No active tab found. Please ensure you're on a Canvas quiz page.");
+    return;
+  }
+  
   try {
     // Step 1: Resolve API base
     sendProgress(tabId, 1, "Detecting API endpoint...");
-    const apiBase = await resolveApiBase(bankId);
+    const apiBase = await resolveApiBase(tabId, bankId);
     
     // Step 2: Fetch bank metadata
     sendProgress(tabId, 1, "Fetching bank metadata...");
-    const bank = await fetchBankMetadata(apiBase, bankId);
+    const bank = await fetchBankMetadata(tabId, apiBase, bankId);
     debugLog("BANK", `Bank title: ${bank.title || bank.name || bankId}`);
     
     // Step 3: Fetch all items
     sendProgress(tabId, 2, "Fetching items (this may take a moment)...");
-    const entries = await fetchAllEntries(apiBase, bankId);
+    const entries = await fetchAllEntries(tabId, apiBase, bankId);
     debugLog("FETCH", `Found ${entries.length} entries`);
     
     // Step 4: Fetch item definitions with timing
     sendProgress(tabId, 3, `Processing ${entries.length} items...`);
-    const itemDefinitions = await fetchItemDefinitions(apiBase, bankId, entries);
+    const itemDefinitions = await fetchItemDefinitions(tabId, apiBase, bankId, entries);
     
     // Step 5: Filter supported types
     sendProgress(tabId, 4, "Validating question types...");
@@ -184,31 +216,31 @@ async function exportBank(bankId, tabId) {
 }
 
 // ========== API FUNCTIONS ==========
-async function fetchBankMetadata(apiBase, bankId) {
-  return trySequential([
-    () => apiFetch(`${apiBase}banks/${bankId}`),
-    () => apiFetch(`${apiBase}item_banks/${bankId}`)
+async function fetchBankMetadata(tabId, apiBase, bankId) {
+  return trySequentialViaTab(tabId, [
+    (tid) => apiFetchViaTab(tid, `${apiBase}banks/${bankId}`),
+    (tid) => apiFetchViaTab(tid, `${apiBase}item_banks/${bankId}`)
   ]);
 }
 
-async function fetchAllEntries(apiBase, bankId) {
-  return trySequential([
-    () => paginatedFetch(`${apiBase}banks/${bankId}/items`),
-    () => paginatedFetch(`${apiBase}banks/${bankId}/bank_entries`),
-    () => paginatedFetch(`${apiBase}item_banks/${bankId}/items`)
+async function fetchAllEntries(tabId, apiBase, bankId) {
+  return trySequentialViaTab(tabId, [
+    (tid) => paginatedFetchViaTab(tid, `${apiBase}banks/${bankId}/items`),
+    (tid) => paginatedFetchViaTab(tid, `${apiBase}banks/${bankId}/bank_entries`),
+    (tid) => paginatedFetchViaTab(tid, `${apiBase}item_banks/${bankId}/items`)
   ]);
 }
 
-async function fetchItemDefinitions(apiBase, bankId, entries) {
+async function fetchItemDefinitions(tabId, apiBase, bankId, entries) {
   const itemIds = entries.map(e => e.id || e.item_id || e.entry_id);
   
   return asyncPool(10, itemIds, async (itemId) => {
     console.time(`item_${itemId}`);
     
-    const result = await trySequential([
-      () => apiFetch(`${apiBase}items/${itemId}`),
-      () => apiFetch(`${apiBase}banks/${bankId}/items/${itemId}`),
-      () => apiFetch(`${apiBase}banks/${bankId}/bank_entries/${itemId}`)
+    const result = await trySequentialViaTab(tabId, [
+      (tid) => apiFetchViaTab(tid, `${apiBase}items/${itemId}`),
+      (tid) => apiFetchViaTab(tid, `${apiBase}banks/${bankId}/items/${itemId}`),
+      (tid) => apiFetchViaTab(tid, `${apiBase}banks/${bankId}/bank_entries/${itemId}`)
     ]);
     
     console.timeEnd(`item_${itemId}`);
