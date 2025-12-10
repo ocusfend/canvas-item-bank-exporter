@@ -14,7 +14,6 @@ const authStatus = document.getElementById('auth-status');
 const authText = document.getElementById('auth-text');
 
 let itemStartTime = null;
-
 let currentBankId = null;
 
 function updateAuthStatus(hasAuth, count, domains) {
@@ -25,7 +24,7 @@ function updateAuthStatus(hasAuth, count, domains) {
       try { return new URL(d).hostname; } catch { return d; }
     }).join(', ') || '';
     authText.textContent = `${count} token${count > 1 ? 's' : ''} captured`;
-    authText.title = domainList; // Show domains on hover
+    authText.title = domainList;
   } else {
     authStatus.classList.remove('authenticated');
     authStatus.classList.add('pending');
@@ -36,7 +35,6 @@ function updateAuthStatus(hasAuth, count, domains) {
 
 function refresh() {
   chrome.runtime.sendMessage({ type: "REQUEST_BANK" }, (response) => {
-    // Update auth status with count and domains
     updateAuthStatus(response?.hasAuth, response?.authCount, response?.authDomains);
     
     if (response?.bank?.id) {
@@ -56,10 +54,8 @@ function showBankDetected(bankId) {
   exportBtn.style.display = 'block';
 }
 
-// Refresh button click
 refreshBtn.addEventListener('click', refresh);
 
-// Export button click
 exportBtn.addEventListener('click', () => {
   if (!currentBankId) return;
   
@@ -81,15 +77,13 @@ exportBtn.addEventListener('click', () => {
   });
 });
 
-// Listen for progress updates from background
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.channel !== 'export') return;
   
   switch (msg.type) {
     case 'progress':
-      progressStep.textContent = `Step ${msg.step}/6`;
+      progressStep.textContent = `Step ${msg.step}/4`;
       progressText.textContent = msg.message;
-      // Hide item progress for non-item steps
       if (msg.step !== 3) {
         progressBarContainer.style.display = 'none';
         progressItem.style.display = 'none';
@@ -97,7 +91,6 @@ chrome.runtime.onMessage.addListener((msg) => {
       break;
     
     case 'item-progress':
-      // Initialize start time on first item
       if (!itemStartTime) {
         itemStartTime = Date.now();
       }
@@ -111,7 +104,6 @@ chrome.runtime.onMessage.addListener((msg) => {
       progressText.textContent = `Processing ${msg.current}/${msg.total} items...`;
       progressItem.textContent = msg.itemTitle ? `📝 ${msg.itemTitle}` : `Item ${msg.current}`;
       
-      // Calculate estimated time remaining
       if (msg.current > 1) {
         const elapsed = Date.now() - itemStartTime;
         const avgTimePerItem = elapsed / msg.current;
@@ -129,7 +121,6 @@ chrome.runtime.onMessage.addListener((msg) => {
       progressArea.classList.add('success');
       exportBtn.disabled = false;
       
-      // Show skipped items warning if any
       if (msg.skippedItems && msg.skippedItems.length > 0) {
         showSkippedWarning(msg.skippedItems);
       }
@@ -169,9 +160,8 @@ function showSkippedWarning(skippedItems) {
     .map(([type, count]) => `${type} (${count})`)
     .join(', ');
   
-  skippedDetails.textContent = `${skippedItems.length} items skipped: ${summary}. See skipped_items.txt in the ZIP for details.`;
+  skippedDetails.textContent = `${skippedItems.length} items skipped: ${summary}. See "skipped" array in the JSON for details.`;
   skippedWarning.style.display = 'block';
 }
 
-// Initial load
 refresh();
