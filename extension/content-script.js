@@ -21,3 +21,56 @@ window.addEventListener("CanvasExporter_ApiBaseDetected", (e) => {
     apiBase: e.detail.apiBase,
   });
 });
+
+// ========== API PROXY FOR BACKGROUND SCRIPT ==========
+// Background script cannot make authenticated requests, so we proxy them here
+
+function parseLinkHeader(header) {
+  if (!header) return {};
+  const links = {};
+  const parts = header.split(',');
+  for (const part of parts) {
+    const match = part.match(/<([^>]+)>;\s*rel="([^"]+)"/);
+    if (match) links[match[2]] = match[1];
+  }
+  return links;
+}
+
+async function paginatedFetch(baseUrl) {
+  const results = [];
+  let url = baseUrl;
+  
+  while (url) {
+    const response = await fetch(url, { credentials: 'include', mode: 'cors' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    
+    const data = await response.json();
+    results.push(...(Array.isArray(data) ? data : [data]));
+    
+    const linkHeader = response.headers.get('Link');
+    const links = parseLinkHeader(linkHeader);
+    url = links.next || null;
+  }
+  
+  return results;
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === "FETCH_API") {
+    fetch(msg.url, { credentials: 'include', mode: 'cors' })
+      .then(response => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      })
+      .then(data => sendResponse({ success: true, data }))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true; // Keep channel open for async response
+  }
+  
+  if (msg.type === "FETCH_PAGINATED") {
+    paginatedFetch(msg.url)
+      .then(data => sendResponse({ success: true, data }))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+});
