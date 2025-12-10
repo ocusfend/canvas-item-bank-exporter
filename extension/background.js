@@ -59,68 +59,119 @@ function findTokenForUrl(url) {
   return null;
 }
 
-// ========== TAB-BASED API FETCH ==========
-async function apiFetchViaTab(tabId, url) {
-  return new Promise((resolve, reject) => {
-    chrome.tabs.sendMessage(tabId, { type: "FETCH_API", url }, response => {
-      if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
-      } else if (response?.success) {
-        resolve(response.data);
-      } else {
-        reject(new Error(response?.error || "Fetch failed"));
-      }
-    });
-  });
-}
-
-async function paginatedFetchViaTab(tabId, url) {
-  return new Promise((resolve, reject) => {
-    chrome.tabs.sendMessage(tabId, { type: "FETCH_PAGINATED", url }, response => {
-      if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
-      } else if (response?.success) {
-        resolve(response.data);
-      } else {
-        reject(new Error(response?.error || "Fetch failed"));
-      }
-    });
-  });
-}
-
-async function trySequentialViaTab(tabId, fetchers) {
-  const errors = [];
-  for (const fetcher of fetchers) {
-    try {
-      return await fetcher(tabId);
-    } catch (e) {
-      errors.push(e.message);
-      continue;
-    }
-  }
-  throw new Error(`All API endpoints failed: ${errors.join(', ')}`);
-}
-
-// ========== AUTHENTICATED FETCH ==========
-async function authenticatedFetch(url) {
-  const headers = { 'Accept': 'application/json' };
+// ========== DIRECT API FETCH (Using background's stored tokens) ==========
+async function directApiFetch(url) {
   const token = findTokenForUrl(url);
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+  
+  if (!token) {
+    throw new Error('TOKEN_EXPIRED: No valid authentication token available');
   }
+  
+  debugLog("FETCH", `Direct fetch: ${url.substring(0, 80)}...`);
   
   const response = await fetch(url, {
     method: 'GET',
-    headers,
+    headers: {
+      'Accept': 'application/json',
+      'Authorization': `Bearer ${token}`
+    },
     mode: 'cors',
     credentials: 'omit'
   });
+  
+  if (response.status === 401 || response.status === 403) {
+    throw new Error('TOKEN_EXPIRED: Authentication failed');
+  }
   
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
   }
   
   return response.json();
+}
+
+async function directPaginatedFetch(url) {
+  const allResults = [];
+  let currentUrl = url;
+  let pageCount = 0;
+  const MAX_PAGES = 50;
+  
+  while (currentUrl && pageCount < MAX_PAGES) {
+    pageCount++;
+    debugLog("PAGE", `Fetching page ${pageCount}: ${currentUrl.substring(0, 60)}...`);
+    
+    const token = findTokenForUrl(currentUrl);
+    if (!token) {
+      throw new Error('TOKEN_EXPIRED: No valid authentication token available');
+    }
+    
+    const response = await fetch(currentUrl, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      mode: 'cors',
+      credentials: 'omit'
+    });
+    
+    if (response.status === 401 || response.status === 403) {
+      throw new Error('TOKEN_EXPIRED: Authentication failed');
+    }
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    
+    // Handle array response
+    if (Array.isArray(data)) {
+      allResults.push(...data);
+    } else if (data.data && Array.isArray(data.data)) {
+      allResults.push(...data.data);
+    } else if (data.items && Array.isArray(data.items)) {
+      allResults.push(...data.items);
+    } else {
+      allResults.push(data);
+    }
+    
+    // Check for next page in Link header
+    const linkHeader = response.headers.get('Link');
+    currentUrl = null;
+    
+    if (linkHeader) {
+      const nextMatch = linkHeader.match(/<([^>]+)>;\s*rel="next"/);
+      if (nextMatch) {
+        currentUrl = nextMatch[1];
+      }
+    }
+    
+    // Also check for next in response body
+    if (!currentUrl && data.meta?.next) {
+      currentUrl = data.meta.next;
+    }
+  }
+  
+  debugLog("PAGE", `Pagination complete: ${allResults.length} total items from ${pageCount} pages`);
+  return allResults;
+}
+
+async function trySequentialDirect(fetchers) {
+  const errors = [];
+  for (const fetcher of fetchers) {
+    try {
+      return await fetcher();
+    } catch (e) {
+      errors.push(e.message);
+      // If token expired, don't try other endpoints - they'll all fail
+      if (e.message.includes('TOKEN_EXPIRED')) {
+        throw e;
+      }
+      continue;
+    }
+  }
+  throw new Error(`All API endpoints failed: ${errors.join(', ')}`);
 }
 
 // ========== MESSAGE HANDLERS ==========
@@ -240,20 +291,28 @@ async function exportBank(bankId, tabId) {
   }
   
   try {
+    // Validate we have tokens before starting
+    if (capturedTokens.size === 0) {
+      sendError(tabId, "🔑 No authentication tokens captured. Please refresh the Canvas page and try again.");
+      return;
+    }
+    
+    debugLog("AUTH", `Starting export with ${capturedTokens.size} captured tokens`);
+    
     // Step 1: Resolve API base
     sendProgress(tabId, 1, "Detecting API endpoint...");
     const apiBase = await resolveApiBase(tabId, bankId);
     
-    // Step 2: Fetch bank metadata
+    // Step 2: Fetch bank metadata (now using direct fetch)
     sendProgress(tabId, 1, "Fetching bank metadata...");
-    const bank = await fetchBankMetadata(tabId, apiBase, bankId);
+    const bank = await fetchBankMetadata(apiBase, bankId);
     debugLog("BANK", `Bank title: ${bank.title || bank.name || bankId}`);
     
-    // Step 3: Fetch all items
+    // Step 3: Fetch all items (now using direct fetch)
     sendProgress(tabId, 2, "Fetching items...");
     let entries;
     try {
-      entries = await fetchAllEntries(tabId, apiBase, bankId);
+      entries = await fetchAllEntries(apiBase, bankId);
     } catch (e) {
       // Check for token expiration errors
       if (e.message.includes('TOKEN_EXPIRED') || e.message.includes('401')) {
@@ -271,13 +330,13 @@ async function exportBank(bankId, tabId) {
     
     // Validate that we actually got items
     if (!entries || entries.length === 0) {
-      sendError(tabId, "📭 No items found in cache. Please:\n1. Refresh the Canvas Item Bank page\n2. Wait for the page to fully load\n3. Click Export again within 30 seconds");
+      sendError(tabId, "📭 No items found. Please ensure you're on a Canvas Item Bank page with questions.");
       return;
     }
     
-    // Step 4: Process items
+    // Step 4: Process items (now using direct fetch)
     sendProgress(tabId, 3, `Processing ${entries.length} items...`);
-    const itemDefinitions = await fetchItemDefinitions(tabId, apiBase, bankId, entries);
+    const itemDefinitions = await fetchItemDefinitions(apiBase, bankId, entries);
     
     // Categorize items
     const { supported, unsupported } = categorizeItems(itemDefinitions);
@@ -371,24 +430,24 @@ function transformItemToJSON(item) {
   };
 }
 
-// ========== API FUNCTIONS ==========
-async function fetchBankMetadata(tabId, apiBase, bankId) {
-  return trySequentialViaTab(tabId, [
-    (tId) => apiFetchViaTab(tId, `${apiBase}banks/${bankId}`),
-    (tId) => apiFetchViaTab(tId, `${apiBase}item_banks/${bankId}`)
+// ========== API FUNCTIONS (Direct fetch using background's tokens) ==========
+async function fetchBankMetadata(apiBase, bankId) {
+  return trySequentialDirect([
+    () => directApiFetch(`${apiBase}banks/${bankId}`),
+    () => directApiFetch(`${apiBase}item_banks/${bankId}`)
   ]);
 }
 
-async function fetchAllEntries(tabId, apiBase, bankId) {
-  return trySequentialViaTab(tabId, [
-    (tId) => paginatedFetchViaTab(tId, `${apiBase}banks/${bankId}/bank_entries/search`),
-    (tId) => paginatedFetchViaTab(tId, `${apiBase}banks/${bankId}/bank_entries`),
-    (tId) => paginatedFetchViaTab(tId, `${apiBase}banks/${bankId}/items`),
-    (tId) => paginatedFetchViaTab(tId, `${apiBase}item_banks/${bankId}/items`)
+async function fetchAllEntries(apiBase, bankId) {
+  return trySequentialDirect([
+    () => directPaginatedFetch(`${apiBase}banks/${bankId}/bank_entries/search`),
+    () => directPaginatedFetch(`${apiBase}banks/${bankId}/bank_entries`),
+    () => directPaginatedFetch(`${apiBase}banks/${bankId}/items`),
+    () => directPaginatedFetch(`${apiBase}item_banks/${bankId}/items`)
   ]);
 }
 
-async function fetchItemDefinitions(tabId, apiBase, bankId, entries) {
+async function fetchItemDefinitions(apiBase, bankId, entries) {
   const items = [];
   const total = entries.length;
   
@@ -416,9 +475,9 @@ async function fetchItemDefinitions(tabId, apiBase, bankId, entries) {
     else if (entry.item_id || entry.id) {
       const itemId = entry.item_id || entry.id;
       try {
-        const item = await trySequentialViaTab(tabId, [
-          (tId) => apiFetchViaTab(tId, `${apiBase}banks/${bankId}/bank_entries/${entry.id}`),
-          (tId) => apiFetchViaTab(tId, `${apiBase}items/${itemId}`)
+        const item = await trySequentialDirect([
+          () => directApiFetch(`${apiBase}banks/${bankId}/bank_entries/${entry.id}`),
+          () => directApiFetch(`${apiBase}items/${itemId}`)
         ]);
         
         if (item.entry && item.entry.id) {
