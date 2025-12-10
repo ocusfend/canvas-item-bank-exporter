@@ -70,6 +70,64 @@
   const responseCache = new Map(); // { url -> { data, timestamp } }
   const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
+  // Smart cache lookup with URL normalization
+  function findCachedResponse(url) {
+    const now = Date.now();
+    
+    // Exact match first
+    const exact = responseCache.get(url);
+    if (exact && (now - exact.timestamp) < CACHE_TTL_MS) {
+      console.log("%c[CanvasExporter] Cache exact hit:", "color:#00bcd4", url.slice(0, 80));
+      return { data: exact.data, age: now - exact.timestamp };
+    }
+    
+    // Try base URL match (strip query params)
+    const baseUrl = url.split('?')[0];
+    
+    // Check if any cached URL matches this base
+    for (const [cachedUrl, cached] of responseCache.entries()) {
+      if ((now - cached.timestamp) < CACHE_TTL_MS) {
+        const cachedBase = cachedUrl.split('?')[0];
+        // Match if: requesting /bank_entries and cache has /bank_entries/search
+        // OR: requesting /bank_entries/search and cache has /bank_entries
+        if (cachedBase === baseUrl || 
+            cachedBase.startsWith(baseUrl + '/search') ||
+            baseUrl.startsWith(cachedBase + '/search') ||
+            cachedBase.replace('/search', '') === baseUrl.replace('/search', '')) {
+          console.log("%c[CanvasExporter] Cache fuzzy hit:", "color:#00bcd4", cachedUrl.slice(0, 80), "for", url.slice(0, 80));
+          return { data: cached.data, age: now - cached.timestamp };
+        }
+      }
+    }
+    
+    return null;
+  }
+
+  // Cache individual entries from list responses
+  function cacheIndividualEntries(url, data) {
+    if (!Array.isArray(data)) return;
+    
+    // Extract base URL for entries (e.g., /banks/123/bank_entries)
+    const baseMatch = url.match(/(.*\/bank_entries)/);
+    if (!baseMatch) return;
+    
+    const baseUrl = baseMatch[1].replace('/search', '');
+    const now = Date.now();
+    
+    for (const entry of data) {
+      if (entry.id) {
+        const entryUrl = `${baseUrl}/${entry.id}`;
+        responseCache.set(entryUrl, { data: entry, timestamp: now });
+      }
+      // Also cache by item ID if available
+      if (entry.entry?.id) {
+        const itemUrl = baseUrl.replace('/bank_entries', '/items') + `/${entry.entry.id}`;
+        responseCache.set(itemUrl, { data: entry.entry, timestamp: now });
+      }
+    }
+    console.log("%c[CanvasExporter] Cached", "color:#00bcd4", data.length, "individual entries from list");
+  }
+
   function emitBearerToken(bearerToken, apiDomain, source, authType = null) {
     const isJWT = bearerToken.startsWith('eyJ');
     const key = `${apiDomain}:${bearerToken.slice(0, 20)}`;
@@ -349,11 +407,11 @@
     console.log("[CanvasExporter] Page context fetch request:", { requestId, url, paginated });
     
     try {
-      // Check cache first (within TTL)
-      const cached = responseCache.get(url);
-      if (cached && (Date.now() - cached.timestamp) < CACHE_TTL_MS) {
+      // Check cache first using smart lookup (handles URL variations like /search)
+      const cached = findCachedResponse(url);
+      if (cached) {
         console.log("%c[CanvasExporter] ★ Cache HIT for:", "color:#00bcd4;font-weight:bold", url.slice(0, 80));
-        console.log("[CanvasExporter] Cache age:", Math.round((Date.now() - cached.timestamp) / 1000), "seconds");
+        console.log("[CanvasExporter] Cache age:", Math.round(cached.age / 1000), "seconds");
         
         window.dispatchEvent(new CustomEvent("CanvasExporter_FetchResponse", {
           detail: { requestId, success: true, data: cached.data }
@@ -400,6 +458,12 @@
       }
       
       console.log("[CanvasExporter] Page context fetch success:", { requestId, dataLength: Array.isArray(data) ? data.length : 1 });
+      
+      // Cache the response
+      responseCache.set(url, { data, timestamp: Date.now() });
+      
+      // Also cache individual entries for later lookups
+      cacheIndividualEntries(url, data);
       
       window.dispatchEvent(new CustomEvent("CanvasExporter_FetchResponse", {
         detail: { requestId, success: true, data }
