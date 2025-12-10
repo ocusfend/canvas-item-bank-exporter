@@ -403,8 +403,10 @@ async function fetchBankMetadata(tabId, apiBase, bankId) {
 
 async function fetchAllEntries(tabId, apiBase, bankId) {
   debugLog("FETCH", `Fetching all entries via page context...`);
-  // Prioritize bank_entries as it contains full item data embedded
+  // Try /bank_entries/search FIRST - this is what Canvas naturally caches
+  // Then fall back to other endpoints
   return trySequentialViaTab(tabId, [
+    (tId) => paginatedFetchViaTab(tId, `${apiBase}banks/${bankId}/bank_entries/search`),
     (tId) => paginatedFetchViaTab(tId, `${apiBase}banks/${bankId}/bank_entries`),
     (tId) => paginatedFetchViaTab(tId, `${apiBase}banks/${bankId}/items`),
     (tId) => paginatedFetchViaTab(tId, `${apiBase}item_banks/${bankId}/items`)
