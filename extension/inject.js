@@ -410,7 +410,16 @@
   // Listen for API fetch requests from content script
   window.addEventListener("CanvasExporter_FetchRequest", async (e) => {
     const { requestId, url, paginated } = e.detail;
-    console.log("[CanvasExporter] Page context fetch request:", { requestId, url, paginated });
+    
+    // CRITICAL: Only respond if this frame has captured tokens
+    // This prevents multiple frames from responding and ensures we use the correct session
+    if (capturedTokens.size === 0) {
+      console.log("[CanvasExporter] No tokens in this frame, ignoring fetch request");
+      return; // Silently ignore - another frame with tokens should handle it
+    }
+    
+    console.log("[CanvasExporter] Page context fetch request (has tokens):", { requestId, url: url.slice(0, 80), paginated });
+    console.log("[CanvasExporter] Available tokens:", [...capturedTokens.keys()]);
     
     try {
       // CACHE-FIRST STRATEGY: Check cache and return immediately if found
