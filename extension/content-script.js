@@ -6,11 +6,15 @@
 // Prevents duplicate listeners on hot reload
 // ============================================
 
+// Prevent duplicate listeners on hot reload
 if (window.__CanvasExporterLoaded) {
   console.log("[CanvasExporter] Already loaded, skipping duplicate init");
-  return;
+  window.__CanvasExporterSkip = true;
+} else {
+  window.__CanvasExporterLoaded = true;
 }
-window.__CanvasExporterLoaded = true;
+
+if (!window.__CanvasExporterSkip) {
 
 // ============================================
 // DEBUG SYSTEM (Dynamic Toggle)
@@ -672,3 +676,5 @@ setTimeout(() => {
 setTimeout(() => {
   setupSmartPolling();
 }, 150);
+
+} // End of skip guard
