@@ -16,7 +16,14 @@
 
   "content_scripts": [
     {
-      "matches": ["*://*.instructure.com/*"],
+      "matches": [
+        "*://*.instructure.com/*",
+        "*://*.instructure.com/*",
+        "*://*.quiz-lti-*.instructure.com/*",
+        "*://*.quiz-api-*.instructure.com/*",
+        "*://*/lti/*",
+        "*://*/api/banks/*"
+      ],
       "js": ["content-script.js"],
       "run_at": "document_start",
       "all_frames": true,
