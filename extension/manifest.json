@@ -6,7 +6,16 @@
 
   "permissions": ["cookies", "webRequest", "storage"],
 
-  "host_permissions": ["*://*.instructure.com/*", "*://*.canvaslms.com/*", "*://*.cloudfront.net/*", "*://*.lrn.io/*"],
+  "host_permissions": [
+    "*://*.instructure.com/*",
+    "*://*.quiz-lti-*.*.instructure.com/*",
+    "*://*.quiz-lti-*.instructure.com/*",
+    "*://*.canvaslms.com/*",
+    "*://*.cloudfront.net/*",
+    "*://*.lrn.io/*",
+    "*://learnosity.com/*",
+    "*://*.learnosity.com/*"
+  ],
 
   "background": {
     "service_worker": "background.js",
@@ -15,7 +24,16 @@
 
   "content_scripts": [
     {
-      "matches": ["*://*.instructure.com/*", "*://*.canvaslms.com/*", "*://*.cloudfront.net/*", "*://*.lrn.io/*"],
+      "matches": [
+        "*://*.instructure.com/*",
+        "*://*.quiz-lti-*.*.instructure.com/*",
+        "*://*.quiz-lti-*.instructure.com/*",
+        "*://*.canvaslms.com/*",
+        "*://*.cloudfront.net/*",
+        "*://*.lrn.io/*",
+        "*://learnosity.com/*",
+        "*://*.learnosity.com/*"
+      ],
       "js": ["content-script.js"],
       "run_at": "document_start",
       "all_frames": true,
