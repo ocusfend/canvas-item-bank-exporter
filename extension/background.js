@@ -172,7 +172,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ 
         bank: latestBank, 
         apiBase: detectedApiBase,
-        hasAuth: !!capturedAuth 
+        hasAuth: !!capturedAuth?.bearerToken,
+        authDomain: capturedAuth?.apiDomain
       });
       break;
 
