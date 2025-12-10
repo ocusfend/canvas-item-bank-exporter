@@ -19,7 +19,7 @@
 
   "web_accessible_resources": [
     {
-      "resources": ["inject.js", "jszip.mjs", "jszip-umd.js"],
+      "resources": ["inject.js", "jszip-umd.js"],
       "matches": ["*://*.instructure.com/*"]
     }
   ],

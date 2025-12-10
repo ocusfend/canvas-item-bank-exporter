@@ -14,14 +14,19 @@ async function loadJSZip() {
   if (jsZipLoadError) throw jsZipLoadError;
   
   try {
-    const module = await import('./jszip.mjs');
-    JSZip = module.default || module;
+    // Use importScripts which is allowed in MV3 service workers
+    // Note: importScripts is synchronous and loads into global scope
+    if (typeof self.JSZip === 'undefined') {
+      importScripts('jszip-umd.js');
+    }
+    
+    JSZip = self.JSZip;
     
     if (typeof JSZip !== 'function') {
       throw new Error('JSZip loaded but is not a constructor');
     }
     
-    debugLog("ZIP", "JSZip loaded successfully");
+    debugLog("ZIP", "JSZip loaded successfully via importScripts");
     return JSZip;
   } catch (error) {
     jsZipLoadError = new Error(`Failed to load JSZip: ${error.message}`);
