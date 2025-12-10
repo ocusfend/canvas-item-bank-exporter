@@ -393,24 +393,69 @@ async function fetchBankMetadata(tabId, apiBase, bankId) {
 
 async function fetchAllEntries(tabId, apiBase, bankId) {
   debugLog("FETCH", `Fetching all entries via page context...`);
+  // Prioritize bank_entries as it contains full item data embedded
   return trySequentialViaTab(tabId, [
-    (tId) => paginatedFetchViaTab(tId, `${apiBase}banks/${bankId}/items`),
     (tId) => paginatedFetchViaTab(tId, `${apiBase}banks/${bankId}/bank_entries`),
+    (tId) => paginatedFetchViaTab(tId, `${apiBase}banks/${bankId}/items`),
     (tId) => paginatedFetchViaTab(tId, `${apiBase}item_banks/${bankId}/items`)
   ]);
 }
 
 async function fetchItemDefinitions(tabId, apiBase, bankId, entries) {
-  const itemIds = entries.map(e => e.id || e.item_id || e.entry_id);
-  debugLog("FETCH", `Fetching ${itemIds.length} item definitions via page context...`);
+  debugLog("FETCH", `Processing ${entries.length} entries for item data...`);
   
-  return asyncPool(10, itemIds, async (itemId) => {
-    return trySequentialViaTab(tabId, [
-      (tId) => apiFetchViaTab(tId, `${apiBase}items/${itemId}`),
-      (tId) => apiFetchViaTab(tId, `${apiBase}banks/${bankId}/items/${itemId}`),
-      (tId) => apiFetchViaTab(tId, `${apiBase}banks/${bankId}/bank_entries/${itemId}`)
-    ]);
-  });
+  const items = [];
+  
+  for (const entry of entries) {
+    // Check if this entry has embedded item data in the 'entry' property
+    // This is the case for bank_entries responses
+    if (entry.entry && entry.entry.id) {
+      const item = {
+        ...entry.entry,
+        bank_entry_id: entry.id,
+        question_type: entry.entry.interaction_type?.slug || entry.entry.user_response_type
+      };
+      items.push(item);
+      debugLog("ITEM", `Extracted embedded item: ${item.id} (${item.title || 'untitled'})`);
+    }
+    // Fallback: entry might BE the item directly (different API format, e.g., /items endpoint)
+    else if (entry.interaction_data || entry.item_body || entry.answers) {
+      items.push({
+        ...entry,
+        question_type: entry.interaction_type?.slug || entry.interaction_type || entry.user_response_type
+      });
+      debugLog("ITEM", `Using entry as item: ${entry.id}`);
+    }
+    // Last resort: entry is just a reference, need to fetch the full item
+    else if (entry.item_id || entry.id) {
+      const itemId = entry.item_id || entry.id;
+      try {
+        debugLog("FETCH", `Fetching item ${itemId} (no embedded data)...`);
+        const item = await trySequentialViaTab(tabId, [
+          (tId) => apiFetchViaTab(tId, `${apiBase}banks/${bankId}/bank_entries/${entry.id}`),
+          (tId) => apiFetchViaTab(tId, `${apiBase}items/${itemId}`)
+        ]);
+        // If we got a bank_entry back, extract the embedded item
+        if (item.entry && item.entry.id) {
+          items.push({
+            ...item.entry,
+            bank_entry_id: item.id,
+            question_type: item.entry.interaction_type?.slug || item.entry.user_response_type
+          });
+        } else {
+          items.push({
+            ...item,
+            question_type: item.interaction_type?.slug || item.interaction_type || item.user_response_type
+          });
+        }
+      } catch (e) {
+        debugLog("WARN", `Could not fetch item ${itemId}: ${e.message}`);
+      }
+    }
+  }
+  
+  debugLog("FETCH", `Successfully processed ${items.length}/${entries.length} items`);
+  return items;
 }
 
 function categorizeItems(items) {
@@ -418,11 +463,16 @@ function categorizeItems(items) {
   const unsupported = [];
   
   for (const item of items) {
-    if (isSupported(item.question_type || item.interaction_type)) {
-      supported.push(item);
+    // Get question type from multiple possible locations
+    const questionType = item.question_type || 
+                         item.interaction_type?.slug || 
+                         item.interaction_type;
+    
+    if (isSupported(questionType)) {
+      supported.push({ ...item, question_type: questionType });
     } else {
-      unsupported.push(item);
-      debugLog("SKIP", `Unsupported: ${item.question_type || item.interaction_type} (ID: ${item.id})`);
+      unsupported.push({ ...item, question_type: questionType });
+      debugLog("SKIP", `Unsupported: ${questionType} (ID: ${item.id})`);
     }
   }
   
