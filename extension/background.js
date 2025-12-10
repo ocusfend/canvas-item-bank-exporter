@@ -60,14 +60,16 @@ async function paginatedFetchViaTab(tabId, url) {
 }
 
 async function trySequentialViaTab(tabId, fetchers) {
+  const errors = [];
   for (const fetcher of fetchers) {
     try {
       return await fetcher(tabId);
     } catch (e) {
+      errors.push(e.message);
       continue;
     }
   }
-  throw new Error("All API endpoints failed");
+  throw new Error(`All API endpoints failed: ${errors.join(', ')}`);
 }
 
 // ========== STATE ==========
@@ -380,50 +382,34 @@ async function exportBank(bankId, tabId) {
   console.timeEnd("export");
 }
 
-// ========== DIRECT FETCH HELPERS (using captured auth) ==========
-async function trySequentialDirect(fetchers) {
-  const errors = [];
-  for (const fetcher of fetchers) {
-    try {
-      return await fetcher();
-    } catch (e) {
-      errors.push(e.message);
-      continue;
-    }
-  }
-  throw new Error(`All API endpoints failed: ${errors.join(', ')}`);
-}
-
-// ========== API FUNCTIONS (now using direct authenticated fetch) ==========
+// ========== API FUNCTIONS (using page-context fetch via content script) ==========
 async function fetchBankMetadata(tabId, apiBase, bankId) {
-  return trySequentialDirect([
-    () => authenticatedFetch(`${apiBase}banks/${bankId}`),
-    () => authenticatedFetch(`${apiBase}item_banks/${bankId}`)
+  debugLog("FETCH", `Fetching bank metadata via page context...`);
+  return trySequentialViaTab(tabId, [
+    (tId) => apiFetchViaTab(tId, `${apiBase}banks/${bankId}`),
+    (tId) => apiFetchViaTab(tId, `${apiBase}item_banks/${bankId}`)
   ]);
 }
 
 async function fetchAllEntries(tabId, apiBase, bankId) {
-  return trySequentialDirect([
-    () => authenticatedPaginatedFetch(`${apiBase}banks/${bankId}/items`),
-    () => authenticatedPaginatedFetch(`${apiBase}banks/${bankId}/bank_entries`),
-    () => authenticatedPaginatedFetch(`${apiBase}item_banks/${bankId}/items`)
+  debugLog("FETCH", `Fetching all entries via page context...`);
+  return trySequentialViaTab(tabId, [
+    (tId) => paginatedFetchViaTab(tId, `${apiBase}banks/${bankId}/items`),
+    (tId) => paginatedFetchViaTab(tId, `${apiBase}banks/${bankId}/bank_entries`),
+    (tId) => paginatedFetchViaTab(tId, `${apiBase}item_banks/${bankId}/items`)
   ]);
 }
 
 async function fetchItemDefinitions(tabId, apiBase, bankId, entries) {
   const itemIds = entries.map(e => e.id || e.item_id || e.entry_id);
+  debugLog("FETCH", `Fetching ${itemIds.length} item definitions via page context...`);
   
   return asyncPool(10, itemIds, async (itemId) => {
-    console.time(`item_${itemId}`);
-    
-    const result = await trySequentialDirect([
-      () => authenticatedFetch(`${apiBase}items/${itemId}`),
-      () => authenticatedFetch(`${apiBase}banks/${bankId}/items/${itemId}`),
-      () => authenticatedFetch(`${apiBase}banks/${bankId}/bank_entries/${itemId}`)
+    return trySequentialViaTab(tabId, [
+      (tId) => apiFetchViaTab(tId, `${apiBase}items/${itemId}`),
+      (tId) => apiFetchViaTab(tId, `${apiBase}banks/${bankId}/items/${itemId}`),
+      (tId) => apiFetchViaTab(tId, `${apiBase}banks/${bankId}/bank_entries/${itemId}`)
     ]);
-    
-    console.timeEnd(`item_${itemId}`);
-    return result;
   });
 }
 
