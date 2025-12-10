@@ -77,18 +77,18 @@ let capturedAuth = null;
 
 // ========== AUTHENTICATED FETCH (CORS-free from background) ==========
 async function authenticatedFetch(url) {
-  const urlObj = new URL(url);
+  const headers = { 'Accept': 'application/json' };
   
-  // Add launch_token to the URL if we have one
-  if (capturedAuth?.launchToken) {
-    urlObj.searchParams.set('launch_token', capturedAuth.launchToken);
+  // Add Authorization header if we have a bearer token
+  if (capturedAuth?.bearerToken) {
+    headers['Authorization'] = `Bearer ${capturedAuth.bearerToken}`;
   }
   
-  debugLog("FETCH", `Auth fetch: ${urlObj.toString()}`);
+  debugLog("FETCH", `Auth fetch: ${url}`);
   
-  const response = await fetch(urlObj.toString(), {
+  const response = await fetch(url, {
     method: 'GET',
-    headers: { 'Accept': 'application/json' },
+    headers,
     mode: 'cors',
     credentials: 'omit'
   });
@@ -115,19 +115,19 @@ async function authenticatedPaginatedFetch(baseUrl) {
   const results = [];
   let url = baseUrl;
   
+  const headers = { 'Accept': 'application/json' };
+  
+  // Add Authorization header if we have a bearer token
+  if (capturedAuth?.bearerToken) {
+    headers['Authorization'] = `Bearer ${capturedAuth.bearerToken}`;
+  }
+  
   while (url) {
-    const urlObj = new URL(url);
+    debugLog("FETCH", `Paginated fetch: ${url}`);
     
-    // Add launch_token to the URL if we have one
-    if (capturedAuth?.launchToken) {
-      urlObj.searchParams.set('launch_token', capturedAuth.launchToken);
-    }
-    
-    debugLog("FETCH", `Paginated fetch: ${urlObj.toString()}`);
-    
-    const response = await fetch(urlObj.toString(), {
+    const response = await fetch(url, {
       method: 'GET',
-      headers: { 'Accept': 'application/json' },
+      headers,
       mode: 'cors',
       credentials: 'omit'
     });
@@ -162,10 +162,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     case "AUTH_DETECTED":
       capturedAuth = {
-        launchToken: msg.launchToken,
+        bearerToken: msg.bearerToken,
         apiDomain: msg.apiDomain
       };
-      debugLog("AUTH", `Launch token captured for ${msg.apiDomain}`);
+      debugLog("AUTH", `Bearer token captured for ${msg.apiDomain}`);
       break;
 
     case "REQUEST_BANK":

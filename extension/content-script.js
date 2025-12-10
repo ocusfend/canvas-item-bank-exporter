@@ -22,14 +22,17 @@ window.addEventListener("CanvasExporter_ApiBaseDetected", (e) => {
   });
 });
 
-// Listen for launch token detection from inject.js
+// Listen for bearer token detection from inject.js
 window.addEventListener("CanvasExporter_AuthDetected", (e) => {
-  console.log("[CanvasExporter] Forwarding launch token to background:", e.detail.apiDomain);
-  chrome.runtime.sendMessage({
-    type: "AUTH_DETECTED",
-    launchToken: e.detail.launchToken,
-    apiDomain: e.detail.apiDomain,
-  });
+  const { bearerToken, apiDomain } = e.detail;
+  if (bearerToken) {
+    console.log("[CanvasExporter] Forwarding bearer token to background:", apiDomain);
+    chrome.runtime.sendMessage({
+      type: "AUTH_DETECTED",
+      bearerToken,
+      apiDomain,
+    });
+  }
 });
 
 // ========== API PROXY VIA PAGE CONTEXT ==========
