@@ -167,36 +167,15 @@
     }));
   }
 
-  // Find the right token for a URL - prioritize fresh JWT tokens
+  // Find the right token for a URL - accept any JWT token (don't reject based on age)
   function findTokenForUrl(url) {
-    const FRESH_THRESHOLD = 30000; // 30 seconds
     const now = Date.now();
     
     try {
       const urlObj = new URL(url);
       const host = urlObj.origin;
       
-      // First, try to find a FRESH JWT token (captured within last 30 seconds)
-      for (const [domain, tokenInfo] of capturedTokens) {
-        if (tokenInfo.isJWT && (now - tokenInfo.capturedAt) < FRESH_THRESHOLD) {
-          // Check domain match for quiz endpoints
-          if (host.includes('quiz-api') || host.includes('quiz-lti')) {
-            const hostMatch = host.match(/quiz-(?:api|lti)[.-]([^.]+)/);
-            const domainMatch = domain.match(/quiz-(?:api|lti)[.-]([^.]+)/);
-            if (hostMatch && domainMatch && hostMatch[1] === domainMatch[1]) {
-              console.log("[CanvasExporter] Found FRESH JWT match for region:", hostMatch[1], "age:", now - tokenInfo.capturedAt, "ms");
-              return tokenInfo;
-            }
-          }
-          // If target matches domain exactly
-          if (domain === host) {
-            console.log("[CanvasExporter] Found FRESH exact JWT match for:", host);
-            return tokenInfo;
-          }
-        }
-      }
-      
-      // Second, try exact domain match for any JWT
+      // First, try exact domain match for any JWT
       if (capturedTokens.has(host)) {
         const tokenInfo = capturedTokens.get(host);
         if (tokenInfo.isJWT) {
@@ -316,13 +295,19 @@
     // Make the actual request
     const response = await origFetch.apply(this, arguments);
     
-    // Cache successful API responses for quiz endpoints
-    if (response.ok && (url.includes('/api/banks/') || url.includes('/api/items') || url.includes('/api/entries'))) {
+    // Cache successful API responses for quiz endpoints - capture EVERYTHING
+    if (response.ok && (url.includes('/api/') || url.includes('/banks/') || url.includes('/items') || url.includes('/entries'))) {
       try {
         const clonedResponse = response.clone();
         const data = await clonedResponse.json();
         responseCache.set(url, { data, timestamp: Date.now() });
         console.log("%c[CanvasExporter] Cached response for:", "color:#00bcd4", url.slice(0, 100));
+        
+        // Also cache individual entries from list responses immediately
+        if (url.includes('/bank_entries') && Array.isArray(data)) {
+          cacheIndividualEntries(url, data);
+          console.log("%c[CanvasExporter] Pre-cached", "color:#00bcd4", data.length, "individual entries");
+        }
       } catch (e) {
         // Ignore cache errors
       }
@@ -407,41 +392,46 @@
     console.log("[CanvasExporter] Page context fetch request:", { requestId, url, paginated });
     
     try {
-      // Check cache first using smart lookup (handles URL variations like /search)
+      // CACHE-FIRST STRATEGY: Check cache and return immediately if found
       const cached = findCachedResponse(url);
       if (cached) {
-        console.log("%c[CanvasExporter] ★ Cache HIT for:", "color:#00bcd4;font-weight:bold", url.slice(0, 80));
+        console.log("%c[CanvasExporter] ★ CACHE HIT - returning immediately:", "color:#00bcd4;font-weight:bold", url.slice(0, 80));
         console.log("[CanvasExporter] Cache age:", Math.round(cached.age / 1000), "seconds");
         
         window.dispatchEvent(new CustomEvent("CanvasExporter_FetchResponse", {
           detail: { requestId, success: true, data: cached.data }
         }));
-        return;
+        return; // CRITICAL: Stop here, don't make network call
       }
       
-      // Find the right token for this URL
+      // No cache - must make network request
+      console.log("%c[CanvasExporter] Cache MISS - attempting network fetch:", "color:#ff9800", url.slice(0, 80));
+      
+      // Find the right token for this URL (accept any available token)
       const tokenInfo = findTokenForUrl(url);
+      
+      if (!tokenInfo || !tokenInfo.token) {
+        // No token available - this will likely fail
+        console.error("%c[CanvasExporter] ✗ No token available! Network request will likely fail.", "color:#f44336;font-weight:bold");
+        console.error("[CanvasExporter] Please refresh the Canvas page to capture a fresh token.");
+        throw new Error("TOKEN_EXPIRED: No valid authentication token available. Please refresh the Canvas page and try again.");
+      }
       
       const headers = { 
         'Accept': 'application/json',
         'Content-Type': 'application/json'
       };
       
-      if (tokenInfo && tokenInfo.token) {
-        // JWT tokens (eyJ...) go without "Bearer" prefix, just like Canvas does
-        if (tokenInfo.isJWT) {
-          headers['Authorization'] = tokenInfo.token; // No "Bearer" prefix for JWT
-          if (tokenInfo.authType) {
-            headers['Authtype'] = tokenInfo.authType; // Include Authtype header
-          }
-          console.log("[CanvasExporter] Using JWT token with Authtype:", tokenInfo.authType);
-        } else {
-          // Non-JWT tokens use Bearer prefix
-          headers['Authorization'] = `Bearer ${tokenInfo.token}`;
+      // JWT tokens (eyJ...) go without "Bearer" prefix, just like Canvas does
+      if (tokenInfo.isJWT) {
+        headers['Authorization'] = tokenInfo.token; // No "Bearer" prefix for JWT
+        if (tokenInfo.authType) {
+          headers['Authtype'] = tokenInfo.authType; // Include Authtype header
         }
-        console.log("[CanvasExporter] Token applied for:", url.slice(0, 80));
+        console.log("[CanvasExporter] Using JWT token (age:", Math.round((Date.now() - tokenInfo.capturedAt) / 1000), "seconds)");
       } else {
-        console.warn("[CanvasExporter] No token available for:", url);
+        // Non-JWT tokens use Bearer prefix
+        headers['Authorization'] = `Bearer ${tokenInfo.token}`;
       }
       
       let data;
@@ -453,6 +443,12 @@
           headers,
           credentials: 'omit' // No cookies - use token instead
         });
+        
+        if (response.status === 401) {
+          console.error("%c[CanvasExporter] ✗ HTTP 401 Unauthorized - token expired!", "color:#f44336;font-weight:bold");
+          throw new Error("TOKEN_EXPIRED: Authentication failed (401). Please refresh the Canvas page and try again.");
+        }
+        
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         data = await response.json();
       }

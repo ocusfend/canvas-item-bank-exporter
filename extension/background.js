@@ -251,8 +251,25 @@ async function exportBank(bankId, tabId) {
     
     // Step 3: Fetch all items
     sendProgress(tabId, 2, "Fetching items...");
-    const entries = await fetchAllEntries(tabId, apiBase, bankId);
+    let entries;
+    try {
+      entries = await fetchAllEntries(tabId, apiBase, bankId);
+    } catch (e) {
+      // Check for token expiration errors
+      if (e.message.includes('TOKEN_EXPIRED') || e.message.includes('401')) {
+        sendError(tabId, "⏰ Authentication expired. Please refresh the Canvas page and click Export again within 30 seconds of page load.");
+        return;
+      }
+      throw e;
+    }
+    
     debugLog("FETCH", `Found ${entries.length} entries`);
+    
+    // Validate that we actually got items
+    if (!entries || entries.length === 0) {
+      sendError(tabId, "📭 No items found in cache. Please:\n1. Refresh the Canvas Item Bank page\n2. Wait for the page to fully load\n3. Click Export again within 30 seconds");
+      return;
+    }
     
     // Step 4: Process items
     sendProgress(tabId, 3, `Processing ${entries.length} items...`);
@@ -289,7 +306,14 @@ async function exportBank(bankId, tabId) {
     
   } catch (error) {
     console.error("[Export Error]", error);
-    sendError(tabId, error.message);
+    // Provide user-friendly error messages
+    if (error.message.includes('TOKEN_EXPIRED') || error.message.includes('401')) {
+      sendError(tabId, "⏰ Authentication expired. Please refresh the Canvas page and click Export again within 30 seconds of page load.");
+    } else if (error.message.includes('All API endpoints failed')) {
+      sendError(tabId, "🔌 Could not connect to Canvas API. Please refresh the page and try again.");
+    } else {
+      sendError(tabId, error.message);
+    }
   }
   
   console.timeEnd("export");
