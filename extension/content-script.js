@@ -6,12 +6,17 @@
 // Prevents duplicate listeners on hot reload
 // ============================================
 
+// Normalize stale flags from previous loads (Chrome hot reload quirk)
+window.__CanvasExporterLoaded ??= false;
+window.__CanvasExporterSkip ??= false;
+
 // Prevent duplicate listeners on hot reload
 if (window.__CanvasExporterLoaded) {
   console.log("[CanvasExporter] Already loaded, skipping duplicate init");
   window.__CanvasExporterSkip = true;
 } else {
   window.__CanvasExporterLoaded = true;
+  window.__CanvasExporterSkip = false;  // Required to avoid illegal return state
 }
 
 if (!window.__CanvasExporterSkip) {
