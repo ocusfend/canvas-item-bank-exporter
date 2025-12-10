@@ -1,3 +1,4 @@
+import JSZip from './jszip.min.js';
 import { 
   apiFetch, trySequential, paginatedFetch, asyncPool,
   isSupported, generateItemXML, generateManifestXML, generateAssessmentXML,
@@ -66,11 +67,19 @@ async function resolveApiBase(bankId) {
     try {
       const testUrl = `${candidate}banks/${bankId}`;
       debugLog("API", `Probing: ${testUrl}`);
+      
+      // Use GET with timeout instead of HEAD (some Canvas endpoints reject HEAD)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      
       const response = await fetch(testUrl, { 
         credentials: 'include', 
         mode: 'cors',
-        method: 'HEAD'
+        signal: controller.signal
       });
+      
+      clearTimeout(timeoutId);
+      
       if (response.ok) {
         debugLog("API", `Found working base: ${candidate}`);
         detectedApiBase = candidate;
@@ -227,11 +236,6 @@ function generateQTIPackage(bank, supported, unsupported) {
 }
 
 async function createZipFile(qtiPackage) {
-  // Dynamic import for JSZip
-  const JSZip = (await import('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js')).default 
-    || window.JSZip 
-    || (await import('./jszip.min.js')).default;
-  
   const zip = new JSZip();
   
   zip.file("imsmanifest.xml", qtiPackage.manifest);
