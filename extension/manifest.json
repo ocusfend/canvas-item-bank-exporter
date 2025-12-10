@@ -5,32 +5,19 @@
   "description": "Export New Quizzes item banks directly from Canvas.",
 
   "permissions": ["storage", "webRequest"],
-  "host_permissions": [
-    "*://*.instructure.com/*",
-    "*://*.quiz-lti-*.instructure.com/*",
-    "*://*.quiz-api-*.instructure.com/*",
-    "*://*/api/banks/*"
-  ],
+  "host_permissions": ["https://*.instructure.com/*"],
 
   "content_scripts": [
     {
-      "matches": [
-        "*://*.instructure.com/*",
-        "*://*.quiz-lti-*.instructure.com/*",
-        "*://*.quiz-api-*.instructure.com/*",
-        "*://*/lti/*",
-        "*://*/api/banks/*"
-      ],
+      "matches": ["https://*.instructure.com/*"],
       "js": ["content-script.js"],
       "run_at": "document_start",
-      "all_frames": true,
-      "match_origin_as_fallback": true
+      "all_frames": true
     }
   ],
 
   "background": {
-    "service_worker": "background.js",
-    "type": "module"
+    "service_worker": "background.js"
   },
 
   "action": {
