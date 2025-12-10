@@ -73,6 +73,81 @@ async function trySequentialViaTab(tabId, fetchers) {
 // ========== STATE ==========
 let latestBank = null;
 let detectedApiBase = null;
+let capturedAuth = null;
+
+// ========== AUTHENTICATED FETCH (CORS-free from background) ==========
+async function authenticatedFetch(url) {
+  const headers = {
+    'Accept': 'application/json',
+  };
+  
+  if (capturedAuth?.authorization) {
+    headers['Authorization'] = capturedAuth.authorization;
+  }
+  
+  debugLog("FETCH", `Auth fetch: ${url}`);
+  
+  const response = await fetch(url, {
+    method: 'GET',
+    headers,
+    mode: 'cors',
+    credentials: 'omit'
+  });
+  
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+  }
+  
+  return response.json();
+}
+
+function parseLinkHeader(header) {
+  if (!header) return {};
+  const links = {};
+  const parts = header.split(',');
+  for (const part of parts) {
+    const match = part.match(/<([^>]+)>;\s*rel="([^"]+)"/);
+    if (match) links[match[2]] = match[1];
+  }
+  return links;
+}
+
+async function authenticatedPaginatedFetch(baseUrl) {
+  const results = [];
+  let url = baseUrl;
+  
+  const headers = {
+    'Accept': 'application/json',
+  };
+  
+  if (capturedAuth?.authorization) {
+    headers['Authorization'] = capturedAuth.authorization;
+  }
+  
+  while (url) {
+    debugLog("FETCH", `Paginated fetch: ${url}`);
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers,
+      mode: 'cors',
+      credentials: 'omit'
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    results.push(...(Array.isArray(data) ? data : [data]));
+    
+    const linkHeader = response.headers.get('Link');
+    const links = parseLinkHeader(linkHeader);
+    url = links.next || null;
+  }
+  
+  return results;
+}
 
 // ========== MESSAGE HANDLERS ==========
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -87,8 +162,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       debugLog("API", `Base path detected: ${detectedApiBase}`);
       break;
 
+    case "AUTH_DETECTED":
+      capturedAuth = {
+        authorization: msg.authorization,
+        apiDomain: msg.apiDomain
+      };
+      debugLog("AUTH", `Auth token captured for ${msg.apiDomain}`);
+      break;
+
     case "REQUEST_BANK":
-      sendResponse({ bank: latestBank, apiBase: detectedApiBase });
+      sendResponse({ 
+        bank: latestBank, 
+        apiBase: detectedApiBase,
+        hasAuth: !!capturedAuth 
+      });
       break;
 
     case "EXPORT_BANK":
@@ -128,6 +215,13 @@ function sendError(tabId, error) {
 
 // ========== API BASE RESOLUTION ==========
 async function resolveApiBase(tabId, bankId) {
+  // Check if we have a captured auth domain to use as base
+  if (capturedAuth?.apiDomain) {
+    const authBase = capturedAuth.apiDomain + '/api/';
+    debugLog("API", `Using auth domain as base: ${authBase}`);
+    return authBase;
+  }
+  
   if (detectedApiBase) {
     debugLog("API", `Using detected base: ${detectedApiBase}`);
     return detectedApiBase;
@@ -140,7 +234,7 @@ async function resolveApiBase(tabId, bankId) {
       const testUrl = `${candidate}banks/${bankId}`;
       debugLog("API", `Probing: ${testUrl}`);
       
-      await apiFetchViaTab(tabId, testUrl);
+      await authenticatedFetch(testUrl);
       debugLog("API", `Found working base: ${candidate}`);
       detectedApiBase = candidate;
       return candidate;
@@ -223,19 +317,33 @@ async function exportBank(bankId, tabId) {
   console.timeEnd("export");
 }
 
-// ========== API FUNCTIONS ==========
+// ========== DIRECT FETCH HELPERS (using captured auth) ==========
+async function trySequentialDirect(fetchers) {
+  const errors = [];
+  for (const fetcher of fetchers) {
+    try {
+      return await fetcher();
+    } catch (e) {
+      errors.push(e.message);
+      continue;
+    }
+  }
+  throw new Error(`All API endpoints failed: ${errors.join(', ')}`);
+}
+
+// ========== API FUNCTIONS (now using direct authenticated fetch) ==========
 async function fetchBankMetadata(tabId, apiBase, bankId) {
-  return trySequentialViaTab(tabId, [
-    (tid) => apiFetchViaTab(tid, `${apiBase}banks/${bankId}`),
-    (tid) => apiFetchViaTab(tid, `${apiBase}item_banks/${bankId}`)
+  return trySequentialDirect([
+    () => authenticatedFetch(`${apiBase}banks/${bankId}`),
+    () => authenticatedFetch(`${apiBase}item_banks/${bankId}`)
   ]);
 }
 
 async function fetchAllEntries(tabId, apiBase, bankId) {
-  return trySequentialViaTab(tabId, [
-    (tid) => paginatedFetchViaTab(tid, `${apiBase}banks/${bankId}/items`),
-    (tid) => paginatedFetchViaTab(tid, `${apiBase}banks/${bankId}/bank_entries`),
-    (tid) => paginatedFetchViaTab(tid, `${apiBase}item_banks/${bankId}/items`)
+  return trySequentialDirect([
+    () => authenticatedPaginatedFetch(`${apiBase}banks/${bankId}/items`),
+    () => authenticatedPaginatedFetch(`${apiBase}banks/${bankId}/bank_entries`),
+    () => authenticatedPaginatedFetch(`${apiBase}item_banks/${bankId}/items`)
   ]);
 }
 
@@ -245,10 +353,10 @@ async function fetchItemDefinitions(tabId, apiBase, bankId, entries) {
   return asyncPool(10, itemIds, async (itemId) => {
     console.time(`item_${itemId}`);
     
-    const result = await trySequentialViaTab(tabId, [
-      (tid) => apiFetchViaTab(tid, `${apiBase}items/${itemId}`),
-      (tid) => apiFetchViaTab(tid, `${apiBase}banks/${bankId}/items/${itemId}`),
-      (tid) => apiFetchViaTab(tid, `${apiBase}banks/${bankId}/bank_entries/${itemId}`)
+    const result = await trySequentialDirect([
+      () => authenticatedFetch(`${apiBase}items/${itemId}`),
+      () => authenticatedFetch(`${apiBase}banks/${bankId}/items/${itemId}`),
+      () => authenticatedFetch(`${apiBase}banks/${bankId}/bank_entries/${itemId}`)
     ]);
     
     console.timeEnd(`item_${itemId}`);
