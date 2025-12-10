@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Canvas New Quizzes Item Bank Exporter",
-  "version": "0.3.4",
-  "description": "Export Canvas New Quizzes Item Banks",
+  "version": "0.4.0",
+  "description": "Export Canvas New Quizzes Item Banks as QTI 2.1 ZIP packages",
 
-  "permissions": ["storage", "scripting", "webRequest"],
+  "permissions": ["storage", "scripting", "downloads"],
 
   "host_permissions": ["*://*.instructure.com/*"],
 
@@ -36,5 +36,11 @@
       "48": "icons/48.png",
       "128": "icons/128.png"
     }
+  },
+
+  "icons": {
+    "16": "icons/16.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
   }
 }
