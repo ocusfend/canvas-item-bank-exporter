@@ -11,10 +11,37 @@ let capturedTokens = new Map();
 
 // ========== TOKEN DOMAIN MATCHING ==========
 function findTokenForUrl(url) {
+  debugLog("AUTH", `Looking for token for: ${url}`);
+  debugLog("AUTH", `Available tokens: ${capturedTokens.size}`);
+  
+  if (capturedTokens.size === 0) {
+    debugLog("AUTH", "No tokens stored!");
+    return null;
+  }
+  
+  // Log all stored domains
+  for (const [domain, auth] of capturedTokens) {
+    debugLog("AUTH", `  Stored domain: ${domain} (token: ${auth.bearerToken?.substring(0, 20)}...)`);
+  }
+  
   try {
     const urlObj = new URL(url);
     const targetHost = urlObj.hostname;
     
+    // First try exact match
+    for (const [domain, auth] of capturedTokens) {
+      try {
+        const authHost = new URL(domain).hostname;
+        if (authHost === targetHost) {
+          debugLog("AUTH", `Exact token match for ${targetHost}`);
+          return auth.bearerToken;
+        }
+      } catch (e) {
+        continue;
+      }
+    }
+    
+    // Try quiz-lti to quiz-api mapping
     for (const [domain, auth] of capturedTokens) {
       try {
         const authHost = new URL(domain).hostname;
@@ -29,8 +56,9 @@ function findTokenForUrl(url) {
           }
         }
         
-        if (authHost === targetHost) {
-          debugLog("AUTH", `Exact token match for ${targetHost}`);
+        // Also try reverse: quiz-api token for quiz-api URL
+        if (targetHost.includes('quiz-api') && authHost.includes('quiz-api')) {
+          debugLog("AUTH", `Matched quiz-api token for ${targetHost}`);
           return auth.bearerToken;
         }
       } catch (e) {
@@ -38,15 +66,17 @@ function findTokenForUrl(url) {
       }
     }
     
+    // Fallback: any quiz-related token for quiz-api URL
     if (targetHost.includes('quiz-api')) {
       for (const [domain, auth] of capturedTokens) {
-        if (domain.includes('quiz-lti')) {
-          debugLog("AUTH", `Fallback quiz-lti token for ${targetHost}`);
+        if (domain.includes('quiz-lti') || domain.includes('quiz-api')) {
+          debugLog("AUTH", `Fallback quiz token for ${targetHost}`);
           return auth.bearerToken;
         }
       }
     }
     
+    // Last resort: use first available token
     if (capturedTokens.size > 0) {
       const firstToken = capturedTokens.values().next().value;
       debugLog("AUTH", `Using first available token for ${targetHost}`);
