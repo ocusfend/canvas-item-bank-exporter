@@ -1,26 +1,21 @@
-function updateUI(bank) {
-  const box = document.getElementById("bankStatus");
+const status = document.getElementById("status");
+const bankBox = document.getElementById("bankBox");
+const bankIdEl = document.getElementById("bankId");
 
-  if (!bank) {
-    box.textContent = "No bank detected";
-    return;
-  }
+function refresh() {
+  chrome.runtime.sendMessage({ type: "REQUEST_BANK" }, (bank) => {
+    if (!bank) {
+      status.textContent = "No bank detected";
+      bankBox.style.display = "none";
+      return;
+    }
 
-  box.textContent = `Bank: ${bank.uuid}`;
+    status.textContent = "Bank detected!";
+    bankBox.style.display = "block";
+    bankIdEl.textContent = bank.id;
+  });
 }
 
-document.getElementById("refresh").onclick = () => {
-  chrome.runtime.sendMessage({ type: "POPUP_REQUEST_STATE" }, (res) => {
-    updateUI(res?.bank || null);
-  });
-};
+document.getElementById("refreshBtn").onclick = refresh;
 
-// Load on open
-chrome.runtime.sendMessage({ type: "POPUP_REQUEST_STATE" }, (res) => {
-  updateUI(res?.bank || null);
-});
-
-// Receive real-time updates
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === "BANK_UPDATE") updateUI(msg.bank);
-});
+refresh();
