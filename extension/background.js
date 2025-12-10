@@ -1,25 +1,16 @@
 // ============================================================================
-// Canvas Exporter — Background Service Worker (Phase 4)
+// Phase 3.4 Background
 // ============================================================================
 
-let currentBankId = null;
+let currentBank = null;
 
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg?.type === "BANK_DETECTED") {
-    currentBankId = msg.bankId;
-
-    chrome.storage.local.set({ currentBankId });
-
-    return;
+chrome.runtime.onMessage.addListener((msg, sender, reply) => {
+  if (msg.type === "CANVAS_EXPORTER_BANK") {
+    currentBank = msg.bank;
+    console.log("[CanvasExporter Background] Bank updated:", currentBank);
   }
-});
 
-// Popup requests the last known bank ID
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg?.type === "GET_BANK_ID") {
-    chrome.storage.local.get("currentBankId", (res) => {
-      sendResponse({ bankId: res.currentBankId || null });
-    });
-    return true; // keep channel open
+  if (msg.type === "CANVAS_EXPORTER_GET_BANK") {
+    reply({ bank: currentBank });
   }
 });
