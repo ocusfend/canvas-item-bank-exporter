@@ -1,10 +1,34 @@
-import JSZip from './jszip.mjs';
 import { 
   apiFetch, trySequential, paginatedFetch, asyncPool,
   isSupported, generateItemXML, generateManifestXML, generateAssessmentXML,
   sanitizeFilename, sanitizeIdentifier, validateXML, debugLog,
   normalizeApiBase, API_BASE_CANDIDATES, summarizeSkippedItems, generateSkippedReport
 } from './utils.js';
+
+// ========== JSZIP LOADER ==========
+let JSZip = null;
+let jsZipLoadError = null;
+
+async function loadJSZip() {
+  if (JSZip) return JSZip;
+  if (jsZipLoadError) throw jsZipLoadError;
+  
+  try {
+    const module = await import('./jszip.mjs');
+    JSZip = module.default || module;
+    
+    if (typeof JSZip !== 'function') {
+      throw new Error('JSZip loaded but is not a constructor');
+    }
+    
+    debugLog("ZIP", "JSZip loaded successfully");
+    return JSZip;
+  } catch (error) {
+    jsZipLoadError = new Error(`Failed to load JSZip: ${error.message}`);
+    debugLog("ERR", jsZipLoadError.message);
+    throw jsZipLoadError;
+  }
+}
 
 // ========== STATE ==========
 let latestBank = null;
@@ -236,7 +260,8 @@ function generateQTIPackage(bank, supported, unsupported) {
 }
 
 async function createZipFile(qtiPackage) {
-  const zip = new JSZip();
+  const JSZipConstructor = await loadJSZip();
+  const zip = new JSZipConstructor();
   
   zip.file("imsmanifest.xml", qtiPackage.manifest);
   zip.file("assessment.xml", qtiPackage.assessment);
