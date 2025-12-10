@@ -11,7 +11,7 @@
 
   function emitBank(uuid, source) {
     const evt = new CustomEvent("CanvasExporter:bankDetected", {
-      detail: { uuid, source }
+      detail: { uuid, source },
     });
     window.dispatchEvent(evt);
   }
@@ -22,7 +22,7 @@
   const origFetch = window.fetch;
   window.fetch = async function (...args) {
     try {
-      const url = (typeof args[0] === "string") ? args[0] : args[0]?.url;
+      const url = typeof args[0] === "string" ? args[0] : args[0]?.url;
       if (url) inspectUrl(url, "fetch");
     } catch {}
     return origFetch.apply(this, args);
@@ -58,5 +58,4 @@
       emitBank(bankId, source);
     }
   }
-
 })();
