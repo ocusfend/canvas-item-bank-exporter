@@ -73,18 +73,75 @@ async function trySequentialViaTab(tabId, fetchers) {
 // ========== STATE ==========
 let latestBank = null;
 let detectedApiBase = null;
-let capturedAuth = null;
+let capturedTokens = new Map(); // Store tokens by domain
+
+// ========== TOKEN DOMAIN MATCHING ==========
+function findTokenForUrl(url) {
+  try {
+    const urlObj = new URL(url);
+    const targetHost = urlObj.hostname;
+    
+    // Priority 1: Match quiz-lti token to quiz-api (same region/instance)
+    for (const [domain, auth] of capturedTokens) {
+      try {
+        const authHost = new URL(domain).hostname;
+        
+        // Match quiz-lti-xxx-prod to quiz-api-xxx-prod
+        if (targetHost.includes('quiz-api') && authHost.includes('quiz-lti')) {
+          const ltiMatch = authHost.match(/^(.+?)\.quiz-lti-(.+)\.instructure\.com$/);
+          const apiMatch = targetHost.match(/^(.+?)\.quiz-api-(.+)\.instructure\.com$/);
+          
+          if (ltiMatch && apiMatch && ltiMatch[1] === apiMatch[1] && ltiMatch[2] === apiMatch[2]) {
+            debugLog("AUTH", `Matched quiz-lti token for ${targetHost}`);
+            return auth.bearerToken;
+          }
+        }
+        
+        // Exact host match
+        if (authHost === targetHost) {
+          debugLog("AUTH", `Exact token match for ${targetHost}`);
+          return auth.bearerToken;
+        }
+      } catch (e) {
+        continue;
+      }
+    }
+    
+    // Priority 2: Any quiz-lti token for quiz-api requests
+    if (targetHost.includes('quiz-api')) {
+      for (const [domain, auth] of capturedTokens) {
+        if (domain.includes('quiz-lti')) {
+          debugLog("AUTH", `Fallback quiz-lti token for ${targetHost}`);
+          return auth.bearerToken;
+        }
+      }
+    }
+    
+    // Priority 3: Return first available token
+    if (capturedTokens.size > 0) {
+      const firstToken = capturedTokens.values().next().value;
+      debugLog("AUTH", `Using first available token for ${targetHost}`);
+      return firstToken.bearerToken;
+    }
+  } catch (e) {
+    debugLog("AUTH", `Token lookup error: ${e.message}`);
+  }
+  
+  return null;
+}
 
 // ========== AUTHENTICATED FETCH (CORS-free from background) ==========
 async function authenticatedFetch(url) {
   const headers = { 'Accept': 'application/json' };
   
-  // Add Authorization header if we have a bearer token
-  if (capturedAuth?.bearerToken) {
-    headers['Authorization'] = `Bearer ${capturedAuth.bearerToken}`;
+  // Find the right token for this URL
+  const token = findTokenForUrl(url);
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+    debugLog("FETCH", `Auth fetch with token: ${url}`);
+  } else {
+    debugLog("FETCH", `Auth fetch (no token): ${url}`);
   }
-  
-  debugLog("FETCH", `Auth fetch: ${url}`);
   
   const response = await fetch(url, {
     method: 'GET',
@@ -115,14 +172,15 @@ async function authenticatedPaginatedFetch(baseUrl) {
   const results = [];
   let url = baseUrl;
   
-  const headers = { 'Accept': 'application/json' };
-  
-  // Add Authorization header if we have a bearer token
-  if (capturedAuth?.bearerToken) {
-    headers['Authorization'] = `Bearer ${capturedAuth.bearerToken}`;
-  }
-  
   while (url) {
+    const headers = { 'Accept': 'application/json' };
+    
+    // Find the right token for this URL
+    const token = findTokenForUrl(url);
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    
     debugLog("FETCH", `Paginated fetch: ${url}`);
     
     const response = await fetch(url, {
@@ -161,19 +219,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       break;
 
     case "AUTH_DETECTED":
-      capturedAuth = {
+      // Store token indexed by domain
+      capturedTokens.set(msg.apiDomain, {
         bearerToken: msg.bearerToken,
-        apiDomain: msg.apiDomain
-      };
-      debugLog("AUTH", `Bearer token captured for ${msg.apiDomain}`);
+        timestamp: Date.now()
+      });
+      debugLog("AUTH", `Token stored for ${msg.apiDomain} (${capturedTokens.size} total)`);
       break;
 
     case "REQUEST_BANK":
       sendResponse({ 
         bank: latestBank, 
         apiBase: detectedApiBase,
-        hasAuth: !!capturedAuth?.bearerToken,
-        authDomain: capturedAuth?.apiDomain
+        hasAuth: capturedTokens.size > 0,
+        authCount: capturedTokens.size,
+        authDomains: Array.from(capturedTokens.keys())
       });
       break;
 
@@ -214,16 +274,20 @@ function sendError(tabId, error) {
 
 // ========== API BASE RESOLUTION ==========
 async function resolveApiBase(tabId, bankId) {
-  // Check if we have a captured auth domain to use as base
-  if (capturedAuth?.apiDomain) {
-    const authBase = capturedAuth.apiDomain + '/api/';
-    debugLog("API", `Using auth domain as base: ${authBase}`);
-    return authBase;
-  }
-  
+  // Prioritize detected API base (from actual quiz-api requests)
   if (detectedApiBase) {
     debugLog("API", `Using detected base: ${detectedApiBase}`);
     return detectedApiBase;
+  }
+  
+  // Try to derive from quiz-lti token domain
+  for (const domain of capturedTokens.keys()) {
+    if (domain.includes('quiz-lti')) {
+      // Convert quiz-lti to quiz-api
+      const apiBase = domain.replace('quiz-lti', 'quiz-api') + '/api/';
+      debugLog("API", `Derived API base from token: ${apiBase}`);
+      return apiBase;
+    }
   }
   
   debugLog("API", "No detected base, probing candidates...");
