@@ -60,18 +60,18 @@
     return null;
   }
 
-  // -------- LAUNCH TOKEN CAPTURE --------
+  // -------- BEARER TOKEN CAPTURE --------
   let lastSentToken = null;
 
-  function emitLaunchToken(launchToken, apiDomain) {
-    const key = `${apiDomain}:${launchToken.slice(0, 20)}`;
+  function emitBearerToken(bearerToken, apiDomain) {
+    const key = `${apiDomain}:${bearerToken.slice(0, 20)}`;
     if (lastSentToken === key) return;
     lastSentToken = key;
 
-    console.log("%c[CanvasExporter] Launch token captured for:", "color:#4caf50;font-weight:bold", apiDomain);
+    console.log("%c[CanvasExporter] Bearer token captured for:", "color:#4caf50;font-weight:bold", apiDomain);
 
     window.dispatchEvent(new CustomEvent("CanvasExporter_AuthDetected", {
-      detail: { launchToken, apiDomain }
+      detail: { bearerToken, apiDomain }
     }));
   }
 
@@ -82,23 +82,45 @@
     const bank = tryParseBank(url);
     if (bank) sendBank(bank);
 
-    // Capture launch_token from URL parameters
-    if (url.includes('quiz-api') || url.includes('quiz-lti')) {
+    // Make the actual request first
+    const response = await origFetch.apply(this, arguments);
+
+    // Capture SDK token from /sdk_token endpoint response
+    if (url.includes('/sdk_token') || url.includes('sdk_token?')) {
       try {
         const urlObj = new URL(url, window.location.origin);
-        const launchToken = urlObj.searchParams.get('launch_token');
+        const apiDomain = urlObj.origin;
         
-        if (launchToken) {
-          emitLaunchToken(launchToken, urlObj.origin);
+        // Clone response to read without consuming
+        const clonedResponse = response.clone();
+        const data = await clonedResponse.json();
+        
+        // Canvas SDK token response contains a "token" field
+        if (data.token) {
+          emitBearerToken(data.token, apiDomain);
         }
       } catch (e) {
-        // Ignore URL parsing errors
+        console.warn("[CanvasExporter] Failed to parse sdk_token response:", e);
+      }
+    }
+    
+    // Also capture Authorization headers from any request Canvas makes
+    const headers = init?.headers;
+    const authHeader = headers?.Authorization || headers?.authorization || 
+                       (headers?.get && headers.get('Authorization'));
+    if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.replace('Bearer ', '');
+        const urlObj = new URL(url, window.location.origin);
+        emitBearerToken(token, urlObj.origin);
+      } catch (e) {
+        // Ignore
       }
     }
 
-    return origFetch.apply(this, arguments);
+    return response;
   };
-  console.log("[CanvasExporter] fetch() patched with launch token capture");
+  console.log("[CanvasExporter] fetch() patched with SDK token capture");
 
   // -------- XHR PATCH --------
   const origOpen = XMLHttpRequest.prototype.open;
