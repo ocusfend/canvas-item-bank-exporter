@@ -92,7 +92,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       break;
 
     case "EXPORT_BANK":
-      exportBank(msg.bankId, sender.tab?.id);
+      // Popup doesn't have sender.tab, so we need to find the active tab
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const activeTabId = tabs[0]?.id;
+        if (activeTabId) {
+          exportBank(msg.bankId, activeTabId);
+        } else {
+          sendError(null, "No active tab found. Please ensure you're on a Canvas quiz page.");
+        }
+      });
       break;
   }
 });
