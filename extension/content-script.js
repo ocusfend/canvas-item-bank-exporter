@@ -1,111 +1,86 @@
 // ============================================================================
-// Canvas Item Bank Exporter — Phase 4
-// FINAL stable version — Fetch/XHR Network Sniffer
+// Canvas Exporter — Phase 3.4
+// XHR + fetch interception (idempotent, sandbox safe)
 // ============================================================================
 
 (() => {
+  if (window.CanvasExporter_ContentLoaded) return;
+  window.CanvasExporter_ContentLoaded = true;
+
   console.log("%c[CanvasExporter] Content script booting…", "color:#9c27b0;font-weight:bold");
+  console.log("%c[CanvasExporter] Initialization starting…", "color:#03a9f4;font-weight:bold");
 
-  // Global state (persists across navigation in SPA)
-  if (!window.CanvasExporter_Global) {
-    window.CanvasExporter_Global = {
-      lastBankId: null,
-      reportedBankIds: new Set(),
-      fetchPatched: false,
-      xhrPatched: false,
-    };
-  }
+  // GLOBAL STATE -------------------------------------------------------------
+  const GS = (window.CanvasExporter_Global = window.CanvasExporter_Global || {
+    lastBank: null,
+    lastEmit: 0,
+    debounceMs: 200,
+  });
 
-  const GS = window.CanvasExporter_Global;
-
-  // Utility: extract bank ID from API URLs
+  // Helper: extract bank ID from URL -----------------------------------------
   function extractBankId(url) {
     if (!url) return null;
-
-    // /api/banks/3387
-    let m = url.match(/\/api\/banks\/(\d+)/);
-    if (m) return m[1];
-
-    // /api/banks/<id>/bank_entries
-    m = url.match(/\/api\/banks\/(\d+)\/bank_entries/);
-    if (m) return m[1];
-
-    return null;
+    const m = url.match(/\/api\/banks\/(\d+)/i);
+    return m ? m[1] : null;
   }
 
-  // Report bank detection to background + popup
-  function reportBank(bankId, source) {
+  function notifyBank(bankId, via) {
     if (!bankId) return;
-    if (GS.lastBankId === bankId) return;
 
-    GS.lastBankId = bankId;
+    const now = performance.now();
+    if (now - GS.lastEmit < GS.debounceMs) return;
+    GS.lastEmit = now;
 
-    console.log(`%c[CanvasExporter] Bank detected (${source}): ${bankId}`, "color:#4caf50;font-weight:bold");
+    GS.lastBank = bankId;
+    console.log(`%c[CanvasExporter] Bank detected: ${bankId} via ${via}`, "color:#4caf50;font-weight:bold");
 
-    chrome.runtime?.sendMessage({
-      type: "BANK_DETECTED",
-      bankId,
-      source,
-      ts: Date.now(),
-    });
+    window.postMessage(
+      {
+        type: "CANVAS_EXPORTER_BANK",
+        bank: bankId,
+        src: via,
+        ts: Date.now(),
+      },
+      "*",
+    );
   }
 
   // ---------------------------------------------------------------------------
-  // FETCH PATCH
+  // FETCH INTERCEPTOR
   // ---------------------------------------------------------------------------
-  function patchFetch() {
-    if (GS.fetchPatched) return;
-    GS.fetchPatched = true;
 
-    const realFetch = window.fetch;
+  if (!window.__CanvasExporter_fetchPatched) {
+    window.__CanvasExporter_fetchPatched = true;
 
-    window.fetch = async function (...args) {
-      try {
-        const url = args[0]?.toString?.() || "";
-        const bankId = extractBankId(url);
-        if (bankId) reportBank(bankId, "fetch");
-      } catch {}
+    const origFetch = window.fetch;
+    window.fetch = async (...args) => {
+      let url = args[0];
+      if (typeof url !== "string") url = url?.url;
 
-      return realFetch.apply(this, args);
+      const bankId = extractBankId(url);
+      if (bankId) notifyBank(bankId, "fetch");
+
+      return origFetch.apply(window, args);
     };
 
     console.log("[CanvasExporter] fetch() patched");
   }
 
   // ---------------------------------------------------------------------------
-  // XHR PATCH
+  // XHR INTERCEPTOR
   // ---------------------------------------------------------------------------
-  function patchXHR() {
-    if (GS.xhrPatched) return;
-    GS.xhrPatched = true;
 
-    const realOpen = XMLHttpRequest.prototype.open;
+  if (!window.__CanvasExporter_xhrPatched) {
+    window.__CanvasExporter_xhrPatched = true;
 
+    const origOpen = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function (method, url, ...rest) {
-      try {
-        const urlStr = url?.toString?.() || "";
-        const bankId = extractBankId(urlStr);
-        if (bankId) reportBank(bankId, "xhr");
-      } catch {}
+      const bankId = extractBankId(url);
+      if (bankId) notifyBank(bankId, "xhr");
 
-      return realOpen.call(this, method, url, ...rest);
+      return origOpen.call(this, method, url, ...rest);
     };
 
     console.log("[CanvasExporter] XHR patched");
   }
-
-  // ---------------------------------------------------------------------------
-  // INITIALIZATION
-  // ---------------------------------------------------------------------------
-
-  console.log("%c[CanvasExporter] Initialization starting…", "color:#03a9f4;font-weight:bold");
-
-  patchFetch();
-  patchXHR();
-
-  // Re-run patches if Canvas hot-reloads page scripts (rare but happens)
-  const interval = setInterval(() => {
-    patchFetch();
-    patchXHR();
-  }, 2000);
 })();
