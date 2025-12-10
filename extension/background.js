@@ -270,15 +270,15 @@ async function exportBank(bankId, tabId) {
     const jsonData = generateJSONExport(bank, supported, unsupported);
     
     const filename = sanitizeFilename(bank.title || bank.name || `bank_${bankId}`) + "_export.json";
-    const blob = new Blob([JSON.stringify(jsonData, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
+    const jsonString = JSON.stringify(jsonData, null, 2);
+    // Convert to base64 data URL (works in MV3 service workers)
+    const base64 = btoa(unescape(encodeURIComponent(jsonString)));
+    const dataUrl = `data:application/json;base64,${base64}`;
     
     chrome.downloads.download({
-      url: url,
+      url: dataUrl,
       filename: filename,
       saveAs: true
-    }, () => {
-      URL.revokeObjectURL(url);
     });
     
     sendComplete(
