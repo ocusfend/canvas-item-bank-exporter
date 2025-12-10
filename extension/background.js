@@ -1,113 +1,78 @@
-// Canvas New Quizzes Item Bank Exporter - Background Service Worker
-// Phase 3.3 - Production-grade with stale protection and debug toggle
+// ============================================================================
+// background.js — Phase 4
+// Central bank-state store + metadata fetcher
+// ============================================================================
 
-console.log("[CanvasExporter] Extension initialized (Phase 3.3)");
+console.log("[CanvasExporter BG] Background loaded.");
 
-// ============================================
-// DEBUG SYSTEM (Dynamic Toggle)
-// ============================================
-
-let DEBUG_ENABLED = false;
-
-// Load debug preference
-chrome.storage.local.get("debug", (result) => {
-  DEBUG_ENABLED = result.debug === true;
-  if (DEBUG_ENABLED) console.log("[CanvasExporter] Debug mode: ON");
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.storage.local.set({
+    currentBankId: null,
+    currentBankInfo: null,
+    debug: false,
+  });
 });
 
-// Listen for changes
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes.debug) {
-    DEBUG_ENABLED = changes.debug.newValue === true;
-    console.log("[CanvasExporter] Debug mode:", DEBUG_ENABLED ? "ON" : "OFF");
-  }
-});
+// Fetch bank metadata ---------------------------------------------------------
 
-// ============================================
-// MESSAGE HANDLER
-// ============================================
+async function fetchBankInfo(bankId) {
+  if (!bankId) return null;
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // Handle PING messages (testing)
-  if (message.type === "PING") {
-    if (DEBUG_ENABLED) {
-      console.log("[CanvasExporter] Received PING from:", sender.tab ? `content script (tab ${sender.tab.id})` : "popup");
+  try {
+    // NOTE — No host is hardcoded; Canvas API URLs come from content script sniffing
+    // The content script only sends the bankId; we reconstruct per domain here.
+    //
+    // We MUST detect the active tab’s origin, because Canvas APIs are origin-specific.
+
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || !tab.url) return null;
+
+    const url = new URL(tab.url);
+    const apiEndpoint = `${url.origin.replace("instructure.com", "quiz-api-sin-prod.instructure.com")}/api/banks/${bankId}`;
+
+    console.log("[CanvasExporter BG] Fetching bank metadata:", apiEndpoint);
+
+    const res = await fetch(apiEndpoint, { credentials: "include" });
+    if (!res.ok) {
+      console.warn("[CanvasExporter BG] Metadata fetch failed:", res.status);
+      return null;
     }
-    sendResponse({ status: "PONG", timestamp: Date.now() });
-    return true;
-  }
-  
-  // Handle bank context detection (Phase 3.3)
-  if (message.type === "BANK_CONTEXT_DETECTED") {
-    const sourceEmoji = {
-      "iframe": "🖼️",
-      "postMessage": "📨",
-      "pmf": "🔀"
+
+    const json = await res.json();
+    return {
+      id: json.id,
+      title: json.title || "Untitled Bank",
+      description: json.description || "",
     };
-    
-    const modeLabel = message.mode === "url" ? "[URL]" : "[PAYLOAD]";
-    const emoji = sourceEmoji[message.source] || "❓";
-    
-    // Always log essential info (one-liner)
-    console.log(`[CanvasExporter] ${emoji} Bank detected: ${message.uuid} (${message.source} ${modeLabel})`);
-    
-    // Detailed logs only in debug mode
-    if (DEBUG_ENABLED) {
-      console.groupCollapsed(`[CanvasExporter] ${emoji} BANK_CONTEXT_DETECTED ${modeLabel} - Details`);
-      console.log("UUID:", message.uuid);
-      console.log("Source:", message.source);
-      console.log("Mode:", message.mode);
-      console.log("Origin:", message.origin || "(not provided)");
-      console.log("Timestamp:", new Date(message.timestamp).toISOString());
-      if (message.rawMessage) {
-        console.log("Raw message:", message.rawMessage);
-      }
-      if (message.iframeUrl) {
-        console.log("Iframe URL:", message.iframeUrl);
-      }
-      console.groupEnd();
-    }
-    
-    // Refinement #1: Stale message protection
-    chrome.storage.session.get("lastDetectedBank").then((current) => {
-      const existingTimestamp = current?.lastDetectedBank?.timestamp || 0;
-      
-      if (existingTimestamp > message.timestamp) {
-        if (DEBUG_ENABLED) {
-          console.log("[CanvasExporter] Ignoring stale bank context (older than current)");
-        }
-        return;
-      }
-      
-      // Store the new bank context
-      chrome.storage.session.set({ lastDetectedBank: message })
-        .then(() => {
-          if (DEBUG_ENABLED) {
-            console.log("[CanvasExporter] Bank context stored");
-          }
-        })
-        .catch((err) => console.error("[CanvasExporter] Storage error:", err));
-    }).catch((err) => {
-      console.error("[CanvasExporter] Failed to check existing bank:", err);
-      // Store anyway if we can't check
-      chrome.storage.session.set({ lastDetectedBank: message }).catch(() => {});
-    });
-    
-    sendResponse({ status: "OK", received: true });
-    return true;
+  } catch (err) {
+    console.error("[CanvasExporter BG] Error fetching bank info:", err);
+    return null;
   }
-  
-  // Handle GET_RECENT_BANKS request from popup
-  if (message.type === "GET_RECENT_BANKS") {
-    chrome.storage.session.get("lastDetectedBank").then((result) => {
-      sendResponse({ 
-        currentBank: result.lastDetectedBank || null
-      });
-    }).catch(() => {
-      sendResponse({ currentBank: null });
+}
+
+// Message handling ------------------------------------------------------------
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type === "BANK_CONTEXT_DETECTED") {
+    console.log("[CanvasExporter BG] Bank detected:", msg.bankId, "via", msg.source);
+
+    // Update current bank ID
+    chrome.storage.local.set({ currentBankId: msg.bankId });
+
+    // Fetch metadata in background
+    fetchBankInfo(msg.bankId).then((info) => {
+      if (info) {
+        chrome.storage.local.set({ currentBankInfo: info });
+
+        // Broadcast to popup or devtools
+        chrome.runtime.sendMessage({
+          type: "BANK_INFO_UPDATED",
+          info,
+        });
+      }
     });
-    return true;
+
+    sendResponse(true);
+    return true; // indicates async response
   }
-  
-  return true;
 });
