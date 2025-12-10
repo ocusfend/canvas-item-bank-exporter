@@ -71,6 +71,30 @@
       color: #666; 
       font-size: 13px; 
     }
+    #progress-bar-container {
+      display: none;
+      margin-top: 8px;
+      background: #e0e0e0;
+      border-radius: 4px;
+      height: 6px;
+      overflow: hidden;
+    }
+    #progress-bar {
+      height: 100%;
+      background: #1976d2;
+      border-radius: 4px;
+      transition: width 0.2s ease-out;
+      width: 0%;
+    }
+    #progress-item {
+      display: none;
+      margin-top: 6px;
+      font-size: 11px;
+      color: #888;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
     
     .success { 
       background: #e8f5e9 !important; 
@@ -169,6 +193,10 @@
   <div id="progress-area">
     <div id="progress-step">Step 1/6</div>
     <div id="progress-text">Initializing...</div>
+    <div id="progress-bar-container">
+      <div id="progress-bar"></div>
+    </div>
+    <div id="progress-item"></div>
   </div>
   
   <div id="skipped-warning">

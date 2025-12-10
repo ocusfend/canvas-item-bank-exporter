@@ -259,6 +259,16 @@ function sendProgress(tabId, step, message) {
   debugLog("PROG", `[${step}/6] ${message}`);
 }
 
+function sendItemProgress(current, total, itemTitle) {
+  chrome.runtime.sendMessage({ 
+    channel: "export", 
+    type: "item-progress", 
+    current, 
+    total, 
+    itemTitle 
+  });
+}
+
 function sendComplete(tabId, message, skippedItems = []) {
   chrome.runtime.sendMessage({ 
     channel: "export", 
@@ -405,8 +415,12 @@ async function fetchItemDefinitions(tabId, apiBase, bankId, entries) {
   debugLog("FETCH", `Processing ${entries.length} entries for item data...`);
   
   const items = [];
+  const total = entries.length;
   
-  for (const entry of entries) {
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    let itemTitle = null;
+    
     // Check if this entry has embedded item data in the 'entry' property
     // This is the case for bank_entries responses
     if (entry.entry && entry.entry.id) {
@@ -416,14 +430,17 @@ async function fetchItemDefinitions(tabId, apiBase, bankId, entries) {
         question_type: entry.entry.interaction_type?.slug || entry.entry.user_response_type
       };
       items.push(item);
+      itemTitle = item.title;
       debugLog("ITEM", `Extracted embedded item: ${item.id} (${item.title || 'untitled'})`);
     }
     // Fallback: entry might BE the item directly (different API format, e.g., /items endpoint)
     else if (entry.interaction_data || entry.item_body || entry.answers) {
-      items.push({
+      const item = {
         ...entry,
         question_type: entry.interaction_type?.slug || entry.interaction_type || entry.user_response_type
-      });
+      };
+      items.push(item);
+      itemTitle = item.title;
       debugLog("ITEM", `Using entry as item: ${entry.id}`);
     }
     // Last resort: entry is just a reference, need to fetch the full item
@@ -437,21 +454,28 @@ async function fetchItemDefinitions(tabId, apiBase, bankId, entries) {
         ]);
         // If we got a bank_entry back, extract the embedded item
         if (item.entry && item.entry.id) {
-          items.push({
+          const extractedItem = {
             ...item.entry,
             bank_entry_id: item.id,
             question_type: item.entry.interaction_type?.slug || item.entry.user_response_type
-          });
+          };
+          items.push(extractedItem);
+          itemTitle = extractedItem.title;
         } else {
-          items.push({
+          const extractedItem = {
             ...item,
             question_type: item.interaction_type?.slug || item.interaction_type || item.user_response_type
-          });
+          };
+          items.push(extractedItem);
+          itemTitle = extractedItem.title;
         }
       } catch (e) {
         debugLog("WARN", `Could not fetch item ${itemId}: ${e.message}`);
       }
     }
+    
+    // Send progress update every item
+    sendItemProgress(i + 1, total, itemTitle);
   }
   
   debugLog("FETCH", `Successfully processed ${items.length}/${entries.length} items`);
