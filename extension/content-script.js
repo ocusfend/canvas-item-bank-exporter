@@ -523,13 +523,14 @@ function scanForIframes() {
 // BODY WAITER (Canvas hydration safety)
 // ============================================
 
-function waitForBody(callback, retries = 20) {
-  if (document.body) {
+function waitForBody(callback, retries = 40) {
+  // Stronger check: body must exist AND be a valid Node
+  if (document.body && document.body instanceof Node) {
     callback();
     return;
   }
   if (retries <= 0) {
-    console.error("[CanvasExporter] ERROR: document.body never arrived.");
+    console.error("[CanvasExporter] ERROR: document.body never became available.");
     return;
   }
   setTimeout(() => waitForBody(callback, retries - 1), 50);
