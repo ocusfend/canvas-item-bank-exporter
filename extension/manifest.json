@@ -1,20 +1,13 @@
 {
   "name": "Canvas New Quizzes Item Bank Exporter",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "manifest_version": 3,
-  "description": "Export New Quizzes item banks directly from Canvas",
 
-  "permissions": ["cookies", "webRequest", "storage"],
+  "description": "Detect Canvas New Quizzes item banks directly via API sniffing.",
 
-  "host_permissions": [
-    "*://*.instructure.com/*",
-    "*://lsts.quiz-lti-sin-prod.instructure.com/*",
-    "*://*.canvaslms.com/*",
-    "*://*.cloudfront.net/*",
-    "*://*.lrn.io/*",
-    "*://learnosity.com/*",
-    "*://*.learnosity.com/*"
-  ],
+  "permissions": ["storage"],
+
+  "host_permissions": ["*://*.instructure.com/*"],
 
   "background": {
     "service_worker": "background.js",
@@ -23,19 +16,9 @@
 
   "content_scripts": [
     {
-      "matches": [
-        "*://*.instructure.com/*",
-        "*://lsts.quiz-lti-sin-prod.instructure.com/*",
-        "*://*.canvaslms.com/*",
-        "*://*.cloudfront.net/*",
-        "*://*.lrn.io/*",
-        "*://learnosity.com/*",
-        "*://*.learnosity.com/*"
-      ],
+      "matches": ["*://*.instructure.com/*"],
       "js": ["content-script.js"],
-      "run_at": "document_start",
-      "all_frames": true,
-      "world": "MAIN"
+      "run_at": "document_start"
     }
   ],
 
