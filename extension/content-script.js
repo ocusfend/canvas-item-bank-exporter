@@ -88,8 +88,18 @@ window.addEventListener("CanvasExporter_FetchResponse", (e) => {
 // ========== MESSAGE HANDLERS FOR BACKGROUND SCRIPT ==========
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // Only handle FETCH messages from the TOP frame to prevent duplicate requests
+  // When all_frames: true, every iframe's content script receives the message
+  // We only want one response, so we ignore iframes for fetch operations
+  if (msg.type === "FETCH_API" || msg.type === "FETCH_PAGINATED") {
+    if (window !== window.top) {
+      console.log("[CanvasExporter] Ignoring fetch request in iframe");
+      return false; // Don't handle in iframes
+    }
+  }
+  
   if (msg.type === "FETCH_API") {
-    console.log("[CanvasExporter] FETCH_API request:", msg.url);
+    console.log("[CanvasExporter] FETCH_API request (top frame):", msg.url);
     fetchViaPage(msg.url, false)
       .then(data => sendResponse({ success: true, data }))
       .catch(error => sendResponse({ success: false, error: error.message }));
@@ -97,7 +107,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   
   if (msg.type === "FETCH_PAGINATED") {
-    console.log("[CanvasExporter] FETCH_PAGINATED request:", msg.url);
+    console.log("[CanvasExporter] FETCH_PAGINATED request (top frame):", msg.url);
     fetchViaPage(msg.url, true)
       .then(data => sendResponse({ success: true, data }))
       .catch(error => sendResponse({ success: false, error: error.message }));
