@@ -1,19 +1,16 @@
-function refreshBank() {
-  chrome.runtime.sendMessage({ type: "CANVAS_EXPORTER_GET_BANK" }, (res) => {
-    const el = document.getElementById("bank");
+function refresh() {
+  chrome.runtime.sendMessage({ type: "POPUP_REQUEST_BANK" }, (res) => {
+    const box = document.getElementById("bankBox");
 
-    if (!res || !res.bank) {
-      el.innerHTML = "<span class='sub'>No bank detected</span>";
+    if (!res || !res.currentBank) {
+      box.textContent = "No bank detected";
       return;
     }
 
-    el.innerHTML = `
-      <div class="bank">Bank ${res.bank}</div>
-      <div class="sub">Detected from LTI / API traffic</div>
-    `;
+    box.textContent = "Detected Bank ID: " + res.currentBank;
   });
 }
 
-document.getElementById("refresh").addEventListener("click", refreshBank);
+document.getElementById("refresh").onclick = refresh;
 
-refreshBank();
+refresh();
