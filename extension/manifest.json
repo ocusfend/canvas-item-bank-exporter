@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Canvas New Quizzes Item Bank Exporter",
-  "description": "Export Canvas New Quizzes Item Banks",
   "version": "0.3.4",
+  "description": "Export Canvas New Quizzes Item Banks",
 
   "permissions": ["storage", "scripting", "webRequest"],
 
@@ -12,8 +12,15 @@
     {
       "matches": ["*://*.instructure.com/*"],
       "js": ["content-script.js"],
-      "all_frames": true,
-      "run_at": "document_start"
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+
+  "web_accessible_resources": [
+    {
+      "resources": ["inject.js"],
+      "matches": ["*://*.instructure.com/*"]
     }
   ],
 
