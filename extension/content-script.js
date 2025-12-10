@@ -22,12 +22,12 @@ window.addEventListener("CanvasExporter_ApiBaseDetected", (e) => {
   });
 });
 
-// Listen for auth header detection from inject.js
+// Listen for launch token detection from inject.js
 window.addEventListener("CanvasExporter_AuthDetected", (e) => {
-  console.log("[CanvasExporter] Forwarding auth to background:", e.detail.apiDomain);
+  console.log("[CanvasExporter] Forwarding launch token to background:", e.detail.apiDomain);
   chrome.runtime.sendMessage({
     type: "AUTH_DETECTED",
-    authorization: e.detail.authorization,
+    launchToken: e.detail.launchToken,
     apiDomain: e.detail.apiDomain,
   });
 });
