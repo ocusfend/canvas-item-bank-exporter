@@ -1,25 +1,21 @@
 // ============================================================================
-// Canvas New Quizzes Item Bank Exporter — Phase 3.3.1
-// FULLY IDEMPOTENT — SAFE FOR MULTIPLE REINJECTIONS
+// Canvas New Quizzes Item Bank Exporter — Phase 3.3.2
+// FULLY IDEMPOTENT + SANDBOX-SAFE (NO chrome.* CRASHES)
 // ============================================================================
 
 (() => {
-  // ← REAL IIFE WRAPPER START (Chrome-safe)
+  console.log("%c[CanvasExporter] Content script booting…", "color:#9c27b0;font-weight:bold");
 
-  // ----------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
   // GLOBAL SINGLETON STATE (never cleared across reinjections)
-  // ----------------------------------------------------------------------------
-
+  // ---------------------------------------------------------------------------
   if (!window.CanvasExporter_GlobalState) {
     window.CanvasExporter_GlobalState = {
       postMessageListenerAttached: false,
       mutationObserverAttached: false,
       smartPollingAttached: false,
 
-      // IMPORTANT:
-      // WeakSet cannot be iterated → changed to Set()
-      trackedIframes: new Set(),
-
+      trackedIframes: new Set(), // FIX: Set, not WeakSet
       confirmedIframes: new WeakMap(),
       iframeLastUrl: new WeakMap(),
 
@@ -38,33 +34,35 @@
 
   const GS = window.CanvasExporter_GlobalState;
 
-  // ----------------------------------------------------------------------------
-  // UTILITY: Add recent UUID with cleanup
-  // ----------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // SAFE STORAGE ACCESS (Chrome API unavailable inside sandboxed LTI iframes)
+  // ---------------------------------------------------------------------------
 
-  function addRecentBank(uuid) {
-    const arr = GS.recentBankUuids.filter((u) => u !== uuid);
-    arr.unshift(uuid);
-    GS.recentBankUuids = arr.slice(0, 10);
+  const storage = chrome?.storage?.local;
+  const storageEvents = chrome?.storage?.onChanged;
+
+  if (!storage) {
+    console.warn(
+      "[CanvasExporter] chrome.storage API unavailable in this frame (Canvas sandbox). Debug toggle disabled here.",
+    );
   }
 
-  // ----------------------------------------------------------------------------
-  // DEBUG SYSTEM (idempotent)
-  // ----------------------------------------------------------------------------
-
+  // Debug configuration --------------------------------------------------------
   const DEBUG_MAX = 50;
 
-  chrome.storage.local.get("debug", ({ debug }) => {
-    GS.debugEnabled = debug === true;
-    if (GS.debugEnabled) console.log("[CanvasExporter] Debug mode ON");
-  });
+  if (storage) {
+    storage.get("debug", ({ debug }) => {
+      GS.debugEnabled = debug === true;
+      if (GS.debugEnabled) console.log("[CanvasExporter] Debug mode ON");
+    });
 
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === "local" && changes.debug) {
-      GS.debugEnabled = changes.debug.newValue === true;
-      console.log("[CanvasExporter] Debug mode:", GS.debugEnabled);
-    }
-  });
+    storageEvents?.addListener((changes, area) => {
+      if (area === "local" && changes.debug) {
+        GS.debugEnabled = changes.debug.newValue === true;
+        console.log("[CanvasExporter] Debug mode:", GS.debugEnabled ? "ON" : "OFF");
+      }
+    });
+  }
 
   setInterval(() => {
     GS.debugCount = 0;
@@ -78,20 +76,20 @@
     }
   }
 
-  function emit(type, detail) {
-    document.dispatchEvent(new CustomEvent("CanvasExporter:" + type, { detail }));
-    debug("Event emitted:", type, detail);
+  function emit(eventType, detail) {
+    document.dispatchEvent(new CustomEvent("CanvasExporter:" + eventType, { detail }));
+    debug("Event emitted:", eventType, detail);
   }
 
-  // ----------------------------------------------------------------------------
-  // URL + UUID UTILITIES
-  // ----------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // URL UTILITIES
+  // ---------------------------------------------------------------------------
 
   function isQuizLtiUrl(url) {
     try {
       if (!url || url.startsWith("blob:")) return false;
-      const host = new URL(url).hostname;
-      return host.includes("quiz-lti") && host.endsWith(".instructure.com");
+      const hostname = new URL(url).hostname;
+      return hostname.includes("quiz-lti") && hostname.endsWith(".instructure.com");
     } catch {
       return false;
     }
@@ -118,71 +116,28 @@
       const win = iframe.contentWindow;
       if (!win) return null;
       const href = win.location?.href;
-      return href && href !== "about:blank" ? href : null;
+      if (!href || href === "about:blank") return null;
+      return href;
     } catch {
       return null;
     }
-  }
-
-  function hasLearnosityFingerprint(obj) {
-    if (!obj || typeof obj !== "object") return false;
-    const keys = Object.keys(obj);
-    const fp = ["activity_id", "session_id", "user_id", "type", "meta", "resource_id"];
-    return keys.filter((k) => fp.includes(k)).length >= 2;
   }
 
   function findUuid(obj) {
     if (!obj) return null;
     const UUID = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
     try {
-      const m = JSON.stringify(obj).match(UUID);
+      const json = JSON.stringify(obj);
+      const m = json.match(UUID);
       return m ? m[1].toLowerCase() : null;
     } catch {
       return null;
     }
   }
 
-  // ----------------------------------------------------------------------------
-  // MESSAGE CLASSIFICATION
-  // ----------------------------------------------------------------------------
-
-  function classify(event) {
-    if (event.origin === "null") return null;
-    const data = event.data;
-    if (!data || typeof data !== "object") return null;
-
-    if (typeof data.message === "string" && data.message.trim().startsWith("{")) {
-      try {
-        data._unpacked = JSON.parse(data.message);
-      } catch {}
-    }
-
-    let hostname = "";
-    try {
-      hostname = new URL(event.origin).hostname;
-    } catch {
-      return null;
-    }
-
-    const isCanvas = hostname === "instructure.com" || hostname.endsWith(".instructure.com");
-    const isPMF =
-      hostname.endsWith(".canvaslms.com") || hostname.endsWith(".cloudfront.net") || hostname.endsWith(".lrn.io");
-
-    const json = JSON.stringify(data);
-    const hasShape =
-      hasLearnosityFingerprint(data) ||
-      hasLearnosityFingerprint(data.data) ||
-      hasLearnosityFingerprint(data._unpacked) ||
-      json.includes("learnosity") ||
-      json.includes("resource_id") ||
-      json.includes("activity_id");
-
-    return { isCanvas, isPMF, data, hasShape };
-  }
-
-  // ----------------------------------------------------------------------------
-  // POSTMESSAGE LISTENER  (idempotent)
-  // ----------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // POSTMESSAGE LISTENER (idempotent)
+  // ---------------------------------------------------------------------------
 
   function attachPostMessageListener() {
     if (GS.postMessageListenerAttached) return;
@@ -193,40 +148,37 @@
       if (now - GS.lastMessageTime < 25) return; // debounce
       GS.lastMessageTime = now;
 
-      const m = classify(event);
-      if (!m || (!m.isCanvas && !m.isPMF)) return;
+      let data = event.data;
+      if (!data || typeof data !== "object") return;
 
-      const payload = m.data;
-
-      const uuid = findUuid(payload) || findUuid(payload.data) || findUuid(payload._unpacked);
+      const uuid = findUuid(data) || findUuid(data?.data) || findUuid(data?._unpacked);
 
       if (!uuid) return;
 
       if (GS.lastMessageUuid === uuid) return;
       GS.lastMessageUuid = uuid;
 
-      addRecentBank(uuid);
-      debug("UUID from message:", uuid);
+      GS.recentBankUuids = [uuid, ...GS.recentBankUuids.filter((x) => x !== uuid)].slice(0, 10);
+
+      debug("UUID via postMessage:", uuid);
 
       const msg = {
         type: "BANK_CONTEXT_DETECTED",
-        source: m.isPMF ? "pmf" : "postMessage",
-        mode: "payload",
+        source: "postMessage",
         uuid,
-        origin: event.origin,
         timestamp: Date.now(),
       };
 
       emit("bankDetected", msg);
-      chrome.runtime.sendMessage(msg, () => {});
+      chrome.runtime?.sendMessage(msg, () => {});
     });
 
     debug("postMessage listener attached");
   }
 
-  // ----------------------------------------------------------------------------
-  // IFRAME PROCESSING (idempotent)
-  // ----------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // IFRAME PROCESSING
+  // ---------------------------------------------------------------------------
 
   function verifyIframe(iframe) {
     if (!GS.confirmedIframes.get(iframe)) {
@@ -241,12 +193,12 @@
     GS.lastIframeCheck = now;
 
     const url = getIframeHref(iframe) || iframe.src;
-    if (!url || !isQuizLtiUrl(url)) return;
+    if (!url) return;
+
+    if (!isQuizLtiUrl(url)) return;
 
     if (GS.iframeLastUrl.get(iframe) === url) return;
     GS.iframeLastUrl.set(iframe, url);
-
-    debug("Iframe URL changed:", url);
 
     const uuid = extractBankFromUrl(url);
     if (!uuid) return;
@@ -254,7 +206,9 @@
     if (GS.lastIframeUuid === uuid) return;
     GS.lastIframeUuid = uuid;
 
-    addRecentBank(uuid);
+    GS.recentBankUuids = [uuid, ...GS.recentBankUuids.filter((x) => x !== uuid)].slice(0, 10);
+
+    console.log(`%c🖼️ Bank detected via iframe URL: ${uuid}`, "color:#4caf50;font-weight:bold");
 
     const msg = {
       type: "BANK_CONTEXT_DETECTED",
@@ -266,7 +220,7 @@
     };
 
     emit("bankDetected", msg);
-    chrome.runtime.sendMessage(msg, () => {});
+    chrome.runtime?.sendMessage(msg, () => {});
   }
 
   function handleIframe(iframe) {
@@ -281,66 +235,70 @@
       }
     }, 100);
 
-    iframe.addEventListener("load", () => setTimeout(() => processIframe(iframe), 50));
+    iframe.addEventListener("load", () => {
+      verifyIframe(iframe);
+      setTimeout(() => processIframe(iframe), 50);
+    });
 
     setTimeout(() => processIframe(iframe), 50);
   }
 
   function scanForIframes() {
-    const all = document.querySelectorAll("iframe");
-    debug(`Scanning ${all.length} iframes`);
-    all.forEach(handleIframe);
+    const iframes = document.querySelectorAll("iframe");
+    console.log(`[CanvasExporter] Initial iframe scan: ${iframes.length} found`);
+    iframes.forEach(handleIframe);
   }
 
-  // ----------------------------------------------------------------------------
-  // MUTATION OBSERVER (idempotent)
-  // ----------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // MUTATION OBSERVER
+  // ---------------------------------------------------------------------------
 
   function attachMutationObserver() {
     if (GS.mutationObserverAttached) return;
     GS.mutationObserverAttached = true;
 
-    const obs = new MutationObserver((mutList) => {
+    if (!document.body) {
+      console.warn("[CanvasExporter] document.body missing at observer attach time");
+      return;
+    }
+
+    const observer = new MutationObserver((mutations) => {
       const now = performance.now();
       if (now - GS.lastMutationTime < 10) return;
       GS.lastMutationTime = now;
 
-      for (const m of mutList) {
-        try {
-          if (m.type === "childList") {
-            m.addedNodes.forEach((node) => {
-              if (node.nodeType !== Node.ELEMENT_NODE) return;
-              if (node.nodeName === "IFRAME") {
-                handleIframe(node);
-              } else if (node.querySelectorAll) {
-                node.querySelectorAll("iframe").forEach(handleIframe);
-              }
-            });
-          }
+      for (const mut of mutations) {
+        if (mut.type === "childList") {
+          mut.addedNodes.forEach((node) => {
+            if (node.nodeType !== Node.ELEMENT_NODE) return;
 
-          if (m.type === "attributes" && m.target.nodeName === "IFRAME") {
-            const iframe = m.target;
-            setTimeout(() => processIframe(iframe), 50);
-          }
-        } catch (err) {
-          console.error("[CanvasExporter] Mutation error:", err);
+            if (node.nodeName === "IFRAME") {
+              handleIframe(node);
+            } else if (node.querySelectorAll) {
+              node.querySelectorAll("iframe").forEach(handleIframe);
+            }
+          });
+        }
+
+        if (mut.type === "attributes" && mut.target.nodeName === "IFRAME") {
+          setTimeout(() => processIframe(mut.target), 50);
         }
       }
     });
 
-    obs.observe(document.body, {
+    observer.observe(document.body, {
       childList: true,
       subtree: true,
       attributes: true,
       attributeFilter: ["src", "srcdoc"],
     });
 
-    debug("MutationObserver attached");
+    console.log("[CanvasExporter] MutationObserver attached");
   }
 
-  // ----------------------------------------------------------------------------
-  // SMART POLLING (idempotent)
-  // ----------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // SMART POLLING
+  // ---------------------------------------------------------------------------
 
   function attachSmartPolling() {
     if (GS.smartPollingAttached) return;
@@ -354,28 +312,30 @@
         const url = getIframeHref(iframe);
         if (!url) return;
 
-        if (GS.iframeLastUrl.get(iframe) === url) return;
-
-        debug("Polling URL change:", url);
-        processIframe(iframe);
+        if (GS.iframeLastUrl.get(iframe) !== url) {
+          console.log("[CanvasExporter] Polling detected iframe URL change:", url);
+          processIframe(iframe);
+        }
       });
     }, 1000);
 
-    debug("Smart polling enabled");
+    console.log("[CanvasExporter] Smart polling enabled");
   }
 
-  // ----------------------------------------------------------------------------
-  // INIT
-  // ----------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // INITIALIZATION
+  // ---------------------------------------------------------------------------
 
-  debug("Content script loaded (3.3.1)");
+  console.log("%c[CanvasExporter] Initialization starting…", "color:#03a9f4;font-weight:bold");
 
   attachPostMessageListener();
 
   setTimeout(() => {
     scanForIframes();
-    if (document.body) attachMutationObserver();
+    attachMutationObserver();
   }, 75);
 
-  setTimeout(() => attachSmartPolling(), 150);
-})(); // ← END OF IIFE WRAPPER
+  setTimeout(() => {
+    attachSmartPolling();
+  }, 150);
+})();
