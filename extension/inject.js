@@ -63,12 +63,25 @@
   // -------- BEARER TOKEN CAPTURE & STORAGE --------
   let lastSentToken = null;
   // Store tokens with their authType: { token: string, authType: string | null, isJWT: boolean, capturedAt: number }
-  const capturedTokens = new Map();
+  // CRITICAL: Use window-level storage to persist across script re-injections
+  if (!window.__canvasExporterTokens) {
+    window.__canvasExporterTokens = new Map();
+  }
+  const capturedTokens = window.__canvasExporterTokens;
   
   // -------- RESPONSE CACHING --------
   // Cache successful API responses to avoid needing to replay with expired tokens
-  const responseCache = new Map(); // { url -> { data, timestamp } }
+  // CRITICAL: Use window-level storage to persist across script re-injections
+  if (!window.__canvasExporterCache) {
+    window.__canvasExporterCache = new Map();
+  }
+  const responseCache = window.__canvasExporterCache;
   const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  
+  // Log persistence status
+  console.log("%c[CanvasExporter] Cache persistence:", "color:#9c27b0", 
+    "tokens:", capturedTokens.size, 
+    "cached responses:", responseCache.size);
 
   // Smart cache lookup with URL normalization
   function findCachedResponse(url) {
