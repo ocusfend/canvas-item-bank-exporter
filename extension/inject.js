@@ -81,6 +81,71 @@
   };
   console.log("[CanvasExporter] XHR patched");
 
+  // ========== API FETCH HANDLER (PAGE CONTEXT) ==========
+  // This runs in the actual page context, so it has access to the page's
+  // authenticated session and cookies - bypassing CORS issues
+
+  function parseLinkHeader(header) {
+    if (!header) return {};
+    const links = {};
+    const parts = header.split(',');
+    for (const part of parts) {
+      const match = part.match(/<([^>]+)>;\s*rel="([^"]+)"/);
+      if (match) links[match[2]] = match[1];
+    }
+    return links;
+  }
+
+  async function paginatedFetchInPage(baseUrl) {
+    const results = [];
+    let url = baseUrl;
+    
+    while (url) {
+      const response = await fetch(url, { credentials: 'include' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      
+      const data = await response.json();
+      results.push(...(Array.isArray(data) ? data : [data]));
+      
+      const linkHeader = response.headers.get('Link');
+      const links = parseLinkHeader(linkHeader);
+      url = links.next || null;
+    }
+    
+    return results;
+  }
+
+  // Listen for API fetch requests from content script
+  window.addEventListener("CanvasExporter_FetchRequest", async (e) => {
+    const { requestId, url, paginated } = e.detail;
+    console.log("[CanvasExporter] Page context fetch request:", { requestId, url, paginated });
+    
+    try {
+      let data;
+      if (paginated) {
+        data = await paginatedFetchInPage(url);
+      } else {
+        const response = await fetch(url, { credentials: 'include' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        data = await response.json();
+      }
+      
+      console.log("[CanvasExporter] Page context fetch success:", { requestId, dataLength: Array.isArray(data) ? data.length : 1 });
+      
+      window.dispatchEvent(new CustomEvent("CanvasExporter_FetchResponse", {
+        detail: { requestId, success: true, data }
+      }));
+    } catch (error) {
+      console.error("[CanvasExporter] Page context fetch error:", { requestId, error: error.message });
+      
+      window.dispatchEvent(new CustomEvent("CanvasExporter_FetchResponse", {
+        detail: { requestId, success: false, error: error.message }
+      }));
+    }
+  });
+
+  console.log("[CanvasExporter] API fetch handler registered");
+
   // ------------------------------------------------------
   // SAFE MUTATION OBSERVER — ONLY INSIDE TOOL IFRAME
   // ------------------------------------------------------

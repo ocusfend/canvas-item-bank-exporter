@@ -22,55 +22,74 @@ window.addEventListener("CanvasExporter_ApiBaseDetected", (e) => {
   });
 });
 
-// ========== API PROXY FOR BACKGROUND SCRIPT ==========
-// Background script cannot make authenticated requests, so we proxy them here
+// ========== API PROXY VIA PAGE CONTEXT ==========
+// Route API calls through inject.js (page context) to bypass CORS
 
-function parseLinkHeader(header) {
-  if (!header) return {};
-  const links = {};
-  const parts = header.split(',');
-  for (const part of parts) {
-    const match = part.match(/<([^>]+)>;\s*rel="([^"]+)"/);
-    if (match) links[match[2]] = match[1];
-  }
-  return links;
+const pendingRequests = new Map();
+
+function fetchViaPage(url, paginated = false) {
+  return new Promise((resolve, reject) => {
+    const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    
+    // Set timeout to avoid hanging forever
+    const timeout = setTimeout(() => {
+      pendingRequests.delete(requestId);
+      reject(new Error("Request timed out after 30s"));
+    }, 30000);
+    
+    pendingRequests.set(requestId, { 
+      resolve: (data) => {
+        clearTimeout(timeout);
+        resolve(data);
+      }, 
+      reject: (err) => {
+        clearTimeout(timeout);
+        reject(err);
+      }
+    });
+    
+    console.log("[CanvasExporter] Dispatching fetch request to page context:", { requestId, url, paginated });
+    
+    window.dispatchEvent(new CustomEvent("CanvasExporter_FetchRequest", {
+      detail: { requestId, url, paginated }
+    }));
+  });
 }
 
-async function paginatedFetch(baseUrl) {
-  const results = [];
-  let url = baseUrl;
+// Listen for responses from inject.js (page context)
+window.addEventListener("CanvasExporter_FetchResponse", (e) => {
+  const { requestId, success, data, error } = e.detail;
+  console.log("[CanvasExporter] Received fetch response from page context:", { requestId, success });
   
-  while (url) {
-    const response = await fetch(url, { credentials: 'include', mode: 'cors' });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    
-    const data = await response.json();
-    results.push(...(Array.isArray(data) ? data : [data]));
-    
-    const linkHeader = response.headers.get('Link');
-    const links = parseLinkHeader(linkHeader);
-    url = links.next || null;
+  const pending = pendingRequests.get(requestId);
+  if (pending) {
+    pendingRequests.delete(requestId);
+    if (success) {
+      pending.resolve(data);
+    } else {
+      pending.reject(new Error(error));
+    }
   }
-  
-  return results;
-}
+});
+
+// ========== MESSAGE HANDLERS FOR BACKGROUND SCRIPT ==========
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "FETCH_API") {
-    fetch(msg.url, { credentials: 'include', mode: 'cors' })
-      .then(response => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.json();
-      })
+    console.log("[CanvasExporter] FETCH_API request:", msg.url);
+    fetchViaPage(msg.url, false)
       .then(data => sendResponse({ success: true, data }))
       .catch(error => sendResponse({ success: false, error: error.message }));
     return true; // Keep channel open for async response
   }
   
   if (msg.type === "FETCH_PAGINATED") {
-    paginatedFetch(msg.url)
+    console.log("[CanvasExporter] FETCH_PAGINATED request:", msg.url);
+    fetchViaPage(msg.url, true)
       .then(data => sendResponse({ success: true, data }))
       .catch(error => sendResponse({ success: false, error: error.message }));
     return true;
   }
 });
+
+console.log("[CanvasExporter] Content script ready - API calls will route through page context");
