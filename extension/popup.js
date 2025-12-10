@@ -4,6 +4,9 @@ const refreshBtn = document.getElementById('refreshBtn');
 const progressArea = document.getElementById('progress-area');
 const progressStep = document.getElementById('progress-step');
 const progressText = document.getElementById('progress-text');
+const progressBarContainer = document.getElementById('progress-bar-container');
+const progressBar = document.getElementById('progress-bar');
+const progressItem = document.getElementById('progress-item');
 const skippedWarning = document.getElementById('skipped-warning');
 const skippedDetails = document.getElementById('skipped-details');
 const authStatus = document.getElementById('auth-status');
@@ -60,6 +63,10 @@ exportBtn.addEventListener('click', () => {
   exportBtn.disabled = true;
   progressArea.style.display = 'block';
   progressArea.classList.remove('success', 'error');
+  progressBarContainer.style.display = 'none';
+  progressBar.style.width = '0%';
+  progressItem.style.display = 'none';
+  progressItem.textContent = '';
   skippedWarning.style.display = 'none';
   
   chrome.runtime.sendMessage({ 
@@ -76,6 +83,20 @@ chrome.runtime.onMessage.addListener((msg) => {
     case 'progress':
       progressStep.textContent = `Step ${msg.step}/6`;
       progressText.textContent = msg.message;
+      // Hide item progress for non-item steps
+      if (msg.step !== 3) {
+        progressBarContainer.style.display = 'none';
+        progressItem.style.display = 'none';
+      }
+      break;
+    
+    case 'item-progress':
+      progressBarContainer.style.display = 'block';
+      progressItem.style.display = 'block';
+      const percent = Math.round((msg.current / msg.total) * 100);
+      progressBar.style.width = `${percent}%`;
+      progressText.textContent = `Processing ${msg.current}/${msg.total} items...`;
+      progressItem.textContent = msg.itemTitle ? `📝 ${msg.itemTitle}` : `Item ${msg.current}`;
       break;
       
     case 'complete':
