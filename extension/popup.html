@@ -267,6 +267,35 @@
     }
     #help-icon:hover { opacity: 1; }
     
+    /* Mode indicator dot */
+    #mode-dot {
+      position: absolute;
+      top: 14px;
+      right: 106px;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      transition: background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+      pointer-events: none;
+    }
+    #mode-dot[data-mode="new-quiz"] {
+      background: var(--badge-new-text);
+      box-shadow: 0 0 4px var(--badge-new-text);
+    }
+    #mode-dot[data-mode="classic-batch"] {
+      background: var(--accent-primary);
+      box-shadow: 0 0 4px var(--accent-primary);
+    }
+    #mode-dot[data-mode="default"] {
+      background: var(--text-muted);
+      box-shadow: none;
+    }
+    #help-icon:hover + #mode-dot {
+      transform: scale(1.3);
+    }
+    
+    
     #help-popup {
       position: absolute;
       top: 40px;
@@ -810,6 +839,7 @@
   <span id="help-icon" title="What is this?">
     <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
   </span>
+  <span id="mode-dot" data-mode="default"></span>
   <div id="help-popup" class="hidden">
     <div id="help-content"></div>
   </div>
