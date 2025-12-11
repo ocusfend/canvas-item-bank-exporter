@@ -806,20 +806,24 @@ function transformItemToJSON(item) {
       shuffleQuestions: item.properties?.shuffle_rules?.questions?.shuffled ?? false
     } : null,
     categorizationSettings: qbType === 'CAT' ? {
-      categories: (item.interaction_data?.categories || []).map(c => ({
+      categories: normalizeToArray(item.interaction_data?.categories).map(c => ({
         id: c.id,
         text: stripHtml(c.item_body || c.body || '')
       })),
-      choices: (item.interaction_data?.choices || []).map(c => ({
+      distractors: normalizeToArray(item.interaction_data?.distractors).map(c => ({
         id: c.id,
         text: stripHtml(c.item_body || c.body || '')
       })),
-      scoreMethod: item.scoring_data?.score_method || null
+      scoreMethod: item.scoring_data?.score_method || null,
+      shuffleCategories: item.properties?.shuffle_rules?.categories?.shuffled ?? false,
+      shuffleDistractors: item.properties?.shuffle_rules?.distractors?.shuffled ?? false
     } : null,
     orderingSettings: qbType === 'ORD' ? {
-      topLabel: item.interaction_data?.top_label || null,
-      bottomLabel: item.interaction_data?.bottom_label || null,
-      choices: (item.interaction_data?.choices || []).map(c => ({
+      topLabel: item.interaction_data?.top_label || item.properties?.top_label || null,
+      bottomLabel: item.interaction_data?.bottom_label || item.properties?.bottom_label || null,
+      includeLabels: item.properties?.include_labels ?? false,
+      displayAsParagraph: item.properties?.display_answers_paragraph ?? false,
+      choices: normalizeToArray(item.interaction_data?.choices).map(c => ({
         id: c.id,
         text: stripHtml(c.item_body || c.body || ''),
         position: c.position ?? null
