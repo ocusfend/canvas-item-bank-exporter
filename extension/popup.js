@@ -103,6 +103,35 @@ let batchExportInProgress = false;
 // Initialize version
 versionEl.textContent = chrome.runtime.getManifest().version;
 
+// ========== HELP CONTENT (Context-Aware) ==========
+
+const helpContent = document.getElementById('help-content');
+
+function updateHelpContent(mode) {
+  if (mode === 'new-quiz') {
+    helpContent.innerHTML = `
+      <p><strong>New Quizzes Item Banks</strong> use Canvas's modern quiz system.</p>
+      <p>Questions are fetched via the Canvas Item Bank API.</p>
+      <p>Export saves all questions from this bank as a single JSON file.</p>
+    `;
+  } else if (mode === 'classic-batch') {
+    helpContent.innerHTML = `
+      <p><strong>Classic Quiz Question Banks</strong> are the original Canvas quiz storage system.</p>
+      <p><strong>Batch export</strong> saves each selected bank as a separate JSON file.</p>
+      <p>Use <kbd>Ctrl+A</kbd> to select all, <kbd>Ctrl+Enter</kbd> to export.</p>
+    `;
+  } else {
+    // Default/no bank detected
+    helpContent.innerHTML = `
+      <p>Navigate to a <strong>Question Bank</strong> page in Canvas to export questions.</p>
+      <p>Supports both <strong>Classic Quiz</strong> and <strong>New Quizzes</strong> Item Banks.</p>
+    `;
+  }
+}
+
+// Initialize help content
+updateHelpContent('default');
+
 // ========== UTILITY FUNCTIONS ==========
 
 function humanDuration(ms) {
@@ -246,6 +275,9 @@ function showBankDetected(bank) {
   currentBankId = bank.id;
   currentBankType = bank.type || 'item_bank';
   currentCourseId = bank.courseId || null;
+  
+  // Update help content based on bank type
+  updateHelpContent(bank.type === 'classic' ? 'classic-batch' : 'new-quiz');
 }
 
 function showNoBank() {
@@ -258,6 +290,9 @@ function showNoBank() {
   currentBankId = null;
   currentBankType = null;
   currentCourseId = null;
+  
+  // Update help content for default state
+  updateHelpContent('default');
 }
 
 // ========== BATCH EXPORT UI ==========
@@ -273,6 +308,9 @@ function showBankList(bankListData) {
   exportBtn.style.display = 'none';
   bankListArea.style.display = 'block';
   exportBatchBtn.style.display = 'block';
+  
+  // Update help content for batch mode
+  updateHelpContent('classic-batch');
   
   // Animated counter
   animateNumber(bankCountEl, 0, banks.length);
