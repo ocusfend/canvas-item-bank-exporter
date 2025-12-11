@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <style>
     body { 
-      width: 340px; 
+      width: 360px; 
       padding: 16px; 
       font-family: system-ui, -apple-system, sans-serif;
       font-size: 14px;
@@ -33,6 +33,22 @@
       background: #ffebee; 
       color: #c62828; 
     }
+    .status .type-badge {
+      display: inline-block;
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      margin-left: 6px;
+      font-weight: 500;
+    }
+    .status .type-badge.classic {
+      background: #e3f2fd;
+      color: #1565c0;
+    }
+    .status .type-badge.new-quiz {
+      background: #fff3e0;
+      color: #e65100;
+    }
     
     #exportBtn {
       width: 100%;
@@ -45,13 +61,14 @@
       border-radius: 8px;
       cursor: pointer;
       display: none;
-      transition: background 0.2s;
+      transition: background 0.2s, opacity 0.2s;
     }
-    #exportBtn:hover { 
+    #exportBtn:hover:not(:disabled) { 
       background: #1565c0; 
     }
     #exportBtn:disabled { 
-      background: #bdbdbd; 
+      background: #e0e0e0; 
+      color: #999;
       cursor: not-allowed; 
     }
     
@@ -116,7 +133,33 @@
       color: #c62828 !important; 
     }
     
-    #skipped-warning {
+    #type-summary {
+      display: none;
+      margin-top: 8px;
+      font-size: 11px;
+      color: #666;
+      padding: 6px 8px;
+      background: #f5f5f5;
+      border-radius: 4px;
+    }
+    
+    #open-folder-btn {
+      display: none;
+      margin-top: 8px;
+      padding: 8px 12px;
+      font-size: 12px;
+      background: #e3f2fd;
+      color: #1565c0;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      width: 100%;
+    }
+    #open-folder-btn:hover {
+      background: #bbdefb;
+    }
+    
+    #warnings-area {
       display: none;
       margin-top: 12px;
       padding: 10px;
@@ -125,14 +168,27 @@
       border-left: 4px solid #ff9800;
       font-size: 12px;
     }
-    #skipped-warning .header {
+    #warnings-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
       font-weight: 600;
       color: #e65100;
-      margin-bottom: 4px;
     }
-    #skipped-warning .details {
+    #warnings-list {
+      margin-top: 8px;
       color: #666;
-      line-height: 1.4;
+      line-height: 1.5;
+      max-height: 120px;
+      overflow-y: auto;
+    }
+    #warnings-list.collapsed {
+      display: none;
+    }
+    .warning-item {
+      padding: 2px 0;
+      font-size: 11px;
     }
 
     #auth-status {
@@ -178,12 +234,30 @@
     .refresh-btn:hover {
       background: #f0f0f0;
     }
+    
+    .footer {
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px solid #eee;
+      font-size: 11px;
+      color: #888;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .footer a {
+      color: #1976d2;
+      text-decoration: none;
+    }
+    .footer a:hover {
+      text-decoration: underline;
+    }
   </style>
 </head>
 <body>
   <h2>
-    📚 Canvas Item Bank Exporter
-    <button id="refreshBtn" class="refresh-btn" title="Refresh">🔄</button>
+    📚 Canvas Quiz Bank Exporter
+    <button id="refreshBtn" class="refresh-btn" title="Re-detect bank">🔄</button>
   </h2>
   
   <div id="auth-status" class="pending">
@@ -195,7 +269,7 @@
     Waiting for bank detection...
   </div>
   
-  <button id="exportBtn">📄 Export JSON</button>
+  <button id="exportBtn" disabled>📄 Export JSON</button>
   
   <div id="progress-area">
     <div id="progress-step">Step 1/4</div>
@@ -207,9 +281,21 @@
     <div id="progress-time"></div>
   </div>
   
-  <div id="skipped-warning">
-    <div class="header">⚠️ Some items were skipped</div>
-    <div class="details" id="skipped-details"></div>
+  <div id="type-summary"></div>
+  
+  <button id="open-folder-btn">📂 Show in folder</button>
+  
+  <div id="warnings-area">
+    <div id="warnings-header">
+      <span>⚠️ <span id="warning-count">0 warnings</span></span>
+      <span id="warnings-toggle">▼</span>
+    </div>
+    <div id="warnings-list"></div>
+  </div>
+  
+  <div class="footer">
+    <span>v<span id="version"></span></span>
+    <a href="https://github.com/canvas-quiz-exporter/issues" target="_blank">🐞 Report an issue</a>
   </div>
   
   <script src="popup.js"></script>

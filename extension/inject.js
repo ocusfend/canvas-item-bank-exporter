@@ -45,20 +45,58 @@
   }
 
   function tryParseBank(url) {
+    // === Classic Quiz Question Bank detection ===
+    // Patterns: /courses/:courseId/question_banks/:bankId
+    const classicWithCourse = url.match(/\/courses\/(\d+)\/question_banks\/(\d+)/);
+    if (classicWithCourse) {
+      return { 
+        id: classicWithCourse[2], 
+        type: "classic", 
+        courseId: classicWithCourse[1] 
+      };
+    }
+    
+    // Shared question bank (no course context)
+    const classicShared = url.match(/\/question_banks\/(\d+)/);
+    if (classicShared && !url.includes('/api/')) {
+      return { 
+        id: classicShared[1], 
+        type: "classic", 
+        courseId: null 
+      };
+    }
+    
+    // === New Quiz Item Bank detection ===
     // Dynamic API base extraction - handles all regional variants
     // Matches: /api/banks/123, /quiz-lti-eu-prod/api/banks/123, /learnosity_proxy/api/banks/123
     const apiBaseMatch = url.match(/(.*\/api\/?)banks\/(\d+)/);
     if (apiBaseMatch) {
       emitApiBase(apiBaseMatch[1]);
-      return { id: Number(apiBaseMatch[2]) };
+      return { id: Number(apiBaseMatch[2]), type: "item_bank" };
     }
 
     // Fallback: shared_banks pattern
     const sharedMatch = url.match(/shared_banks.*entity_id=(\d+)/);
-    if (sharedMatch) return { id: Number(sharedMatch[1]) };
+    if (sharedMatch) return { id: Number(sharedMatch[1]), type: "item_bank" };
 
     return null;
   }
+  
+  // Page-load detection for Classic banks
+  (function detectClassicBankOnLoad() {
+    const pathname = window.location.pathname;
+    
+    const courseMatch = pathname.match(/\/courses\/(\d+)\/question_banks\/(\d+)/);
+    if (courseMatch) {
+      sendBank({ id: courseMatch[2], type: "classic", courseId: courseMatch[1] });
+      return;
+    }
+    
+    const sharedMatch = pathname.match(/\/question_banks\/(\d+)/);
+    if (sharedMatch) {
+      sendBank({ id: sharedMatch[1], type: "classic", courseId: null });
+    }
+  })();
 
   // -------- BEARER TOKEN CAPTURE & STORAGE --------
   let lastSentToken = null;

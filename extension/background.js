@@ -1,7 +1,11 @@
 import { 
   mapCanvasTypeToQBType,
   sanitizeFilename, debugLog,
-  normalizeApiBase, API_BASE_CANDIDATES
+  normalizeApiBase, API_BASE_CANDIDATES,
+  CLASSIC_TYPE_MAP,
+  parseClassicBankHtml,
+  hashQuestion,
+  ExportWarnings
 } from './utils.js';
 
 // ========== STATE ==========
@@ -213,7 +217,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         const activeTabId = tabs[0]?.id;
         if (activeTabId) {
-          exportBank(msg.bankId, activeTabId);
+          if (msg.bankType === "classic") {
+            exportClassicBank(msg.bankId, msg.courseId, activeTabId);
+          } else {
+            exportBank(msg.bankId, activeTabId);
+          }
         } else {
           sendError(null, "No active tab found. Please ensure you're on a Canvas quiz page.");
         }
@@ -398,7 +406,9 @@ async function exportBank(bankId, tabId) {
 // ========== JSON EXPORT GENERATION ==========
 function generateJSONExport(bank, items) {
   return {
+    format: "item_bank",
     exportVersion: "2.2",
+    extensionVersion: chrome.runtime.getManifest().version,
     exportedAt: new Date().toISOString(),
     bank: {
       id: bank.id,
@@ -1003,4 +1013,218 @@ function categorizeItems(items) {
   }
   
   return allItems;
+}
+
+// ========== CLASSIC QUIZ EXPORT PIPELINE ==========
+
+// Categorize errors for user-friendly display
+function categorizeError(error) {
+  const msg = error.message.toLowerCase();
+  if (msg.includes('auth') || msg.includes('login') || msg.includes('session')) {
+    return 'Authentication required';
+  }
+  if (msg.includes('network') || msg.includes('fetch') || msg.includes('http')) {
+    return 'Network error';
+  }
+  if (msg.includes('parse') || msg.includes('no questions')) {
+    return 'Parsing error';
+  }
+  return 'Unknown error';
+}
+
+// Suggest fixes for common errors
+function getErrorFix(error) {
+  const msg = error.message.toLowerCase();
+  if (msg.includes('auth') || msg.includes('login') || msg.includes('session')) {
+    return 'Log into Canvas in this browser tab and try again.';
+  }
+  if (msg.includes('network')) {
+    return 'Check your internet connection and refresh the page.';
+  }
+  if (msg.includes('no questions')) {
+    return 'The question bank may be empty or the page structure has changed.';
+  }
+  return 'Try refreshing the page and exporting again.';
+}
+
+// Count question types
+function countQuestionTypes(questions) {
+  const counts = {};
+  for (const q of questions) {
+    const type = q.type || 'UNKNOWN';
+    counts[type] = (counts[type] || 0) + 1;
+  }
+  return counts;
+}
+
+async function exportClassicBank(bankId, courseId, tabId) {
+  console.groupCollapsed(`[Classic Export] Bank ${bankId}`);
+  console.time("export-classic");
+  
+  try {
+    sendProgress(tabId, 1, "Fetching question bank page...");
+    const html = await fetchClassicBankHtml(tabId, courseId, bankId);
+    
+    sendProgress(tabId, 2, "Parsing questions...");
+    const { bankTitle, questions, groups, canvasSignature, warnings } = parseClassicBankHtml(html);
+    console.log("Parsed:", { bankTitle, questionCount: questions.length, groups, canvasSignature });
+    
+    if (questions.length === 0) {
+      throw new Error("No questions found in bank.");
+    }
+    
+    sendProgress(tabId, 3, `Processing ${questions.length} questions...`);
+    
+    // Async chunking for large banks
+    const questionsWithHashes = [];
+    for (let idx = 0; idx < questions.length; idx++) {
+      const q = questions[idx];
+      sendItemProgress(idx + 1, questions.length, q.title || `Question ${idx + 1}`);
+      const hash = await hashQuestion(q);
+      questionsWithHashes.push({ ...q, hash });
+      
+      // Yield every 50 questions to prevent UI freeze
+      if (idx % 50 === 0 && idx > 0) {
+        await new Promise(r => setTimeout(r, 0));
+      }
+    }
+    
+    sendProgress(tabId, 4, "Finalizing JSON...");
+    const exportData = generateClassicExport(bankId, courseId, bankTitle, questionsWithHashes, groups, canvasSignature, warnings);
+    
+    const filename = sanitizeFilename(bankTitle || `classic_bank_${bankId}`) + "_export.json";
+    const downloadId = await downloadJsonWithId(exportData, filename);
+    
+    const typeCounts = countQuestionTypes(questionsWithHashes);
+    const warningCount = warnings?.length || 0;
+    
+    // Send complete with download ID and warnings for popup
+    sendCompleteWithData(tabId, {
+      message: `Export complete! ${questionsWithHashes.length} questions exported.`,
+      downloadId,
+      warnings,
+      typeCounts
+    });
+    
+    console.log("Export complete:", { questions: questionsWithHashes.length, warnings: warningCount });
+    
+  } catch (error) {
+    console.error("Export failed:", error);
+    sendErrorWithData(tabId, {
+      message: error.message,
+      reason: categorizeError(error),
+      fix: getErrorFix(error)
+    });
+  }
+  
+  console.timeEnd("export-classic");
+  console.groupEnd();
+}
+
+async function fetchClassicBankHtml(tabId, courseId, bankId) {
+  return new Promise((resolve, reject) => {
+    // Build URL (handle shared banks with no course)
+    const url = courseId 
+      ? `/courses/${courseId}/question_banks/${bankId}`
+      : `/question_banks/${bankId}`;
+    
+    chrome.tabs.sendMessage(tabId, {
+      type: "FETCH_HTML",
+      url
+    }, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      if (response?.success) {
+        resolve(response.html);
+      } else {
+        reject(new Error(response?.error || "Failed to fetch question bank page"));
+      }
+    });
+  });
+}
+
+async function downloadJsonWithId(data, filename) {
+  // Pretty-print JSON for readability
+  const jsonString = JSON.stringify(data, null, 2);
+  const base64 = btoa(unescape(encodeURIComponent(jsonString)));
+  const dataUrl = `data:application/json;base64,${base64}`;
+  
+  return new Promise((resolve) => {
+    chrome.downloads.download({ url: dataUrl, filename, saveAs: true }, (downloadId) => {
+      resolve(downloadId);
+    });
+  });
+}
+
+function generateClassicExport(bankId, courseId, bankTitle, questions, groups, canvasSignature, warnings) {
+  return {
+    // === FORMAT DISCRIMINATOR ===
+    format: "classic",
+    exportVersion: "1.0",
+    extensionVersion: chrome.runtime.getManifest().version,
+    
+    // === METADATA ===
+    exportedAt: new Date().toISOString(),
+    canvasSignature,
+    
+    // === TYPE MAPPING ===
+    typeMap: CLASSIC_TYPE_MAP,
+    
+    bank: {
+      id: bankId,
+      courseId,
+      title: bankTitle,
+      type: "assessment_question_bank"
+    },
+    
+    summary: {
+      totalQuestions: questions.length,
+      questionTypes: countQuestionTypes(questions)
+    },
+    
+    warnings,
+    groups,
+    
+    questions: questions.map(q => ({
+      id: q.id,
+      uuid: q.uuid,
+      assessmentId: q.assessmentId,
+      type: q.type,
+      originalType: q.originalType,
+      title: q.title,
+      body: q.body,
+      bodyRaw: q.bodyRaw,
+      bodyText: q.bodyText,
+      points: q.points,
+      blanks: q.blanks || undefined,
+      answers: q.answers,
+      calculatedData: q.calculatedData || undefined,
+      feedback: q.feedback,
+      isInformational: q.isInformational || undefined,
+      migratableToNewQuizzes: q.migratableToNewQuizzes,
+      hash: q.hash
+    }))
+  };
+}
+
+function sendCompleteWithData(tabId, data) {
+  chrome.runtime.sendMessage({ 
+    channel: "export", 
+    type: "complete", 
+    data,
+    message: data.message
+  });
+  debugLog("DONE", data.message);
+}
+
+function sendErrorWithData(tabId, data) {
+  chrome.runtime.sendMessage({ 
+    channel: "export", 
+    type: "error", 
+    data,
+    error: data.message
+  });
+  debugLog("ERR", data.message);
 }
