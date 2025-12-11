@@ -184,18 +184,34 @@ let currentExportTabId = null;
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   switch (msg.type) {
     case "BANK_DETECTED":
-      latestBank = msg.bank;
-      debugLog("BANK", `Bank stored: ${msg.bank.id}`);
+      const bankTabId = sender.tab?.id;
+      latestBank = { ...msg.bank, tabId: bankTabId };
+      
+      // Clear stale bank list if same tab (mutual exclusion)
+      if (latestBankList && latestBankList.tabId === bankTabId) {
+        debugLog("BANK", `Clearing stale bank list (same tab ${bankTabId})`);
+        latestBankList = null;
+      }
+      
+      debugLog("BANK", `Bank stored: ${msg.bank.id} (tab ${bankTabId})`);
       break;
 
     case "BANK_LIST_DETECTED":
+      const listTabId = sender.tab?.id;
       // Store with tabId to prevent stale data
       latestBankList = { 
         courseId: msg.courseId, 
         banks: msg.banks,
-        tabId: sender.tab?.id
+        tabId: listTabId
       };
-      debugLog("BANK", `Bank list stored: ${msg.banks.length} banks in course ${msg.courseId} (tab ${sender.tab?.id})`);
+      
+      // Clear stale single bank if same tab (mutual exclusion)
+      if (latestBank && latestBank.tabId === listTabId) {
+        debugLog("BANK", `Clearing stale single bank (same tab ${listTabId})`);
+        latestBank = null;
+      }
+      
+      debugLog("BANK", `Bank list stored: ${msg.banks.length} banks in course ${msg.courseId} (tab ${listTabId})`);
       break;
 
     case "API_BASE_DETECTED":
@@ -212,11 +228,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       break;
 
     case "REQUEST_BANK":
-      // Check for stale bank list (different tab)
+      // Check for stale data (different tab)
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         const currentTabId = tabs[0]?.id;
         let bankListResponse = null;
+        let bankResponse = null;
         
+        // Check bank list staleness
         if (latestBankList && latestBankList.tabId === currentTabId) {
           bankListResponse = latestBankList;
         } else if (latestBankList && latestBankList.tabId !== currentTabId) {
@@ -224,8 +242,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           latestBankList = null;
         }
         
+        // Check single bank staleness
+        if (latestBank && latestBank.tabId === currentTabId) {
+          bankResponse = latestBank;
+        } else if (latestBank && latestBank.tabId !== currentTabId) {
+          // Stale data from different tab - discard
+          latestBank = null;
+        }
+        
         sendResponse({ 
-          bank: latestBank, 
+          bank: bankResponse, 
           bankList: bankListResponse,
           apiBase: detectedApiBase,
           hasAuth: capturedTokens.size > 0,
