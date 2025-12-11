@@ -539,8 +539,119 @@ function transformItemToJSON(item) {
     }
   }
 
+  // Matching - scoring_data.value is {questionId: "answerText"}
+  else if (qbType === 'MAT') {
+    const scoringValue = item.scoring_data?.value;
+    const questions = item.interaction_data?.questions || [];
+    
+    if (scoringValue && typeof scoringValue === 'object' && !Array.isArray(scoringValue)) {
+      // Build answer pairs from questions and scoring data
+      answers = questions.map((q, idx) => ({
+        id: q.id || `q_${idx}`,
+        questionText: stripHtml(q.item_body || q.body || q.text || ''),
+        answerText: scoringValue[q.id] || '',
+        correct: true
+      }));
+    } else {
+      answers = [];
+    }
+  }
+  // Categorization - scoring_data.value is {categoryId: [answerIds]}
+  else if (qbType === 'CAT') {
+    const scoringValue = item.scoring_data?.value;
+    const categories = item.interaction_data?.categories || [];
+    const choices = item.interaction_data?.choices || [];
+    
+    if (scoringValue && typeof scoringValue === 'object' && !Array.isArray(scoringValue)) {
+      // Build category-answer mappings
+      answers = categories.map((cat, idx) => {
+        const answerIds = scoringValue[cat.id] || [];
+        const answerTexts = answerIds.map(id => {
+          const choice = choices.find(c => c.id === id);
+          return stripHtml(choice?.item_body || choice?.body || id);
+        });
+        return {
+          id: cat.id || `cat_${idx}`,
+          categoryText: stripHtml(cat.item_body || cat.body || cat.text || ''),
+          answers: answerTexts,
+          correct: true
+        };
+      });
+    } else {
+      answers = [];
+    }
+  }
+  // Ordering - scoring_data.value is array of IDs in correct order
+  else if (qbType === 'ORD') {
+    const scoringValue = item.scoring_data?.value;
+    const choices = item.interaction_data?.choices || [];
+    
+    if (Array.isArray(scoringValue)) {
+      // Map IDs to their text in correct order
+      answers = scoringValue.map((id, idx) => {
+        const choice = choices.find(c => c.id === id);
+        return {
+          id: id,
+          text: stripHtml(choice?.item_body || choice?.body || choice?.text || id),
+          position: idx + 1,
+          correct: true
+        };
+      });
+    } else {
+      answers = [];
+    }
+  }
+  // Hot Spot - scoring_data.value is array of {id, type, coordinates}
+  else if (qbType === 'HS') {
+    const scoringValue = item.scoring_data?.value;
+    
+    if (Array.isArray(scoringValue)) {
+      answers = scoringValue.map((hotspot, idx) => ({
+        id: hotspot.id || `hotspot_${idx}`,
+        type: hotspot.type || 'unknown',  // 'square', 'circle', 'polygon'
+        coordinates: hotspot.coordinates || null,
+        correct: true
+      }));
+    } else if (scoringValue && typeof scoringValue === 'object') {
+      // Single hotspot object
+      answers = [{
+        id: scoringValue.id || 'hotspot_0',
+        type: scoringValue.type || 'unknown',
+        coordinates: scoringValue.coordinates || null,
+        correct: true
+      }];
+    } else {
+      answers = [];
+    }
+  }
+  // Formula - scoring_data has variables and generated solutions
+  else if (qbType === 'FORM') {
+    const scoringValue = item.scoring_data?.value;
+    const variables = item.scoring_data?.variables || [];
+    const solutions = item.scoring_data?.generated_solutions || [];
+    
+    if (Array.isArray(solutions) && solutions.length > 0) {
+      answers = solutions.map((sol, idx) => ({
+        id: `solution_${idx}`,
+        inputs: sol.inputs || {},
+        output: String(sol.output ?? ''),
+        correct: true
+      }));
+    } else if (scoringValue !== undefined && scoringValue !== null) {
+      // Single formula answer
+      answers = [{
+        id: 'formula_answer',
+        text: String(scoringValue),
+        correct: true
+      }];
+    } else {
+      answers = [];
+    }
+  }
+
   // Fallback: legacy answer formats
-  if (answers.length === 0 && qbType !== 'PASSAGE' && qbType !== 'FU' && qbType !== 'ESS' && qbType !== 'NUM') {
+  const noAnswerTypes = ['PASSAGE', 'FU', 'ESS', 'NUM', 'MAT', 'CAT', 'ORD', 'HS', 'FORM'];
+  if (answers.length === 0 && !noAnswerTypes.includes(qbType)) {
     console.log(`[Transform] Item ${item.id}: Using fallback answer extraction`);
     const baseAnswers = item.answers || item.choices || [];
     answers = baseAnswers.map((answer, idx) => ({
@@ -585,6 +696,56 @@ function transformItemToJSON(item) {
         : null,
       marginOfError: item.scoring_data?.margin_of_error ?? null,
       marginType: item.scoring_data?.margin_type ?? null
+    } : null,
+    // Matching settings
+    matchingSettings: qbType === 'MAT' ? {
+      questions: (item.interaction_data?.questions || []).map(q => ({
+        id: q.id,
+        text: stripHtml(q.item_body || q.body || ''),
+        answerText: stripHtml(q.answer_body || q.answer?.body || '')
+      })),
+      shuffleQuestions: item.properties?.shuffle_rules?.questions?.shuffled ?? false,
+      scoringAlgorithm: item.scoring_algorithm || 'PartialDeep'
+    } : null,
+    // Categorization settings
+    categorizationSettings: qbType === 'CAT' ? {
+      categories: (item.interaction_data?.categories || []).map(c => ({
+        id: c.id,
+        text: stripHtml(c.item_body || c.body || '')
+      })),
+      choices: (item.interaction_data?.choices || []).map(c => ({
+        id: c.id,
+        text: stripHtml(c.item_body || c.body || '')
+      })),
+      scoringAlgorithm: item.scoring_algorithm || 'Categorization',
+      scoreMethod: item.scoring_data?.score_method || 'all_or_nothing'
+    } : null,
+    // Ordering settings
+    orderingSettings: qbType === 'ORD' ? {
+      topLabel: item.interaction_data?.top_label || null,
+      bottomLabel: item.interaction_data?.bottom_label || null,
+      choices: (item.interaction_data?.choices || []).map(c => ({
+        id: c.id,
+        text: stripHtml(c.item_body || c.body || '')
+      }))
+    } : null,
+    // Hot Spot settings
+    hotSpotSettings: qbType === 'HS' ? {
+      imageUrl: item.interaction_data?.image_url || null,
+      hotspotsCount: item.interaction_data?.hotspots_count || 0
+    } : null,
+    // Formula settings
+    formulaSettings: qbType === 'FORM' ? {
+      variables: (item.scoring_data?.variables || []).map(v => ({
+        name: v.name,
+        min: v.min,
+        max: v.max,
+        precision: v.precision ?? 0
+      })),
+      marginOfError: item.scoring_data?.margin_of_error ?? 0,
+      marginType: item.scoring_data?.margin_type || 'absolute',
+      answerCount: item.scoring_data?.answer_count ?? 1,
+      formula: item.scoring_data?.formula || null
     } : null,
     feedback: {
       correct: item.correct_comments || item.feedback?.correct || '',
