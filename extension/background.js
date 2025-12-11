@@ -474,9 +474,19 @@ function transformItemToJSON(item) {
       }));
     }
   }
+  // Text Block / Passage
+  else if (qbType === 'PASSAGE') {
+    // Passages don't have answers, just content
+    answers = [];
+  }
+  // File Upload
+  else if (qbType === 'FU') {
+    // File uploads don't have answers
+    answers = [];
+  }
 
   // Fallback: legacy answer formats
-  if (answers.length === 0) {
+  if (answers.length === 0 && qbType !== 'PASSAGE' && qbType !== 'FU') {
     const baseAnswers = item.answers || item.choices || [];
     answers = baseAnswers.map((answer, idx) => ({
       id: answer.id || `answer_${idx}`,
@@ -489,10 +499,12 @@ function transformItemToJSON(item) {
     id: item.id,
     type: qbType,
     originalType: canvasType,
+    entryType: item.entry_type || 'Item',
     title: item.title || item.question_name || 'Untitled',
     body,
     points,
     answers,
+    allowedFiles: item.interaction_data?.allowed_files || null,
     feedback: {
       correct: item.correct_comments || item.feedback?.correct || '',
       incorrect: item.incorrect_comments || item.feedback?.incorrect || '',
@@ -525,6 +537,25 @@ async function fetchItemDefinitions(apiBase, bankId, entries) {
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
     let itemTitle = null;
+    
+    // Handle Stimulus entries (Text Blocks vs Unsupported Stimulus)
+    if (entry.entry_type === 'Stimulus' || entry.entry?.stimulus_type) {
+      const stimulusEntry = entry.entry || entry;
+      const isPassage = stimulusEntry.passage === true;
+      
+      const item = {
+        ...stimulusEntry,
+        bank_entry_id: entry.id,
+        entry_type: 'Stimulus',
+        // passage: true → 'text-block' (supported)
+        // passage: false → 'stimulus' (unsupported)
+        question_type: isPassage ? 'text-block' : 'stimulus'
+      };
+      items.push(item);
+      itemTitle = item.title;
+      sendItemProgress(i + 1, total, itemTitle);
+      continue;
+    }
     
     if (entry.entry && entry.entry.id) {
       const item = {
