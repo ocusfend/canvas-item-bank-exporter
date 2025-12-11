@@ -558,16 +558,37 @@ function transformItemToJSON(item) {
   // Matching - scoring_data.value is {questionId: "answerText"}
   else if (qbType === 'MAT') {
     const scoringValue = item.scoring_data?.value;
-    const questions = item.interaction_data?.questions || [];
+    const questions = normalizeToArray(item.interaction_data?.questions);
+    const answers_list = normalizeToArray(item.interaction_data?.answers);
     
     if (scoringValue && typeof scoringValue === 'object' && !Array.isArray(scoringValue)) {
       // Build answer pairs from questions and scoring data
-      answers = questions.map((q, idx) => ({
-        id: q.id || `q_${idx}`,
-        questionText: stripHtml(q.item_body || q.body || q.text || ''),
-        answerText: scoringValue[q.id] || '',
-        correct: true
-      }));
+      answers = questions.map((q, idx) => {
+        const answerId = scoringValue[q.id];
+        const answerObj = answers_list.find(a => a.id === answerId);
+        return {
+          id: q.id || `q_${idx}`,
+          questionText: stripHtml(q.item_body || q.body || q.text || ''),
+          answerId: answerId || null,
+          answerText: stripHtml(answerObj?.item_body || answerObj?.body || answerId || ''),
+          correct: true
+        };
+      });
+    } else if (Array.isArray(scoringValue)) {
+      // Handle array-style scoring: [{id, scoring_data: {value: answerId}}]
+      answers = scoringValue.map((qScore, idx) => {
+        const questionId = qScore.id;
+        const answerId = qScore.scoring_data?.value;
+        const question = questions.find(q => q.id === questionId);
+        const answerObj = answers_list.find(a => a.id === answerId);
+        return {
+          id: questionId,
+          questionText: stripHtml(question?.item_body || question?.body || ''),
+          answerId: answerId || null,
+          answerText: stripHtml(answerObj?.item_body || answerObj?.body || answerId || ''),
+          correct: true
+        };
+      });
     } else {
       answers = [];
     }
@@ -798,12 +819,16 @@ function transformItemToJSON(item) {
         : null
     } : null,
     matchingSettings: qbType === 'MAT' ? {
-      questions: (item.interaction_data?.questions || []).map(q => ({
+      questions: normalizeToArray(item.interaction_data?.questions).map(q => ({
         id: q.id,
-        text: stripHtml(q.item_body || q.body || ''),
-        answerText: stripHtml(q.answer_body || q.answer?.body || '')
+        text: stripHtml(q.item_body || q.body || '')
       })),
-      shuffleQuestions: item.properties?.shuffle_rules?.questions?.shuffled ?? false
+      answers: normalizeToArray(item.interaction_data?.answers).map(a => ({
+        id: a.id,
+        text: stripHtml(a.item_body || a.body || '')
+      })),
+      shuffleQuestions: item.properties?.shuffle_rules?.questions?.shuffled ?? false,
+      shuffleAnswers: item.properties?.shuffle_rules?.answers?.shuffled ?? false
     } : null,
     categorizationSettings: qbType === 'CAT' ? {
       categories: normalizeToArray(item.interaction_data?.categories).map(c => ({
