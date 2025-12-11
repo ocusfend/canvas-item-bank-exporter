@@ -7,6 +7,7 @@ import {
 
 // ========== STATE ==========
 let latestBank = null;
+let latestBankList = null;  // { courseId, banks, tabId } for batch export
 let detectedApiBase = null;
 let capturedTokens = new Map();
 
@@ -187,6 +188,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       debugLog("BANK", `Bank stored: ${msg.bank.id}`);
       break;
 
+    case "BANK_LIST_DETECTED":
+      // Store with tabId to prevent stale data
+      latestBankList = { 
+        courseId: msg.courseId, 
+        banks: msg.banks,
+        tabId: sender.tab?.id
+      };
+      debugLog("BANK", `Bank list stored: ${msg.banks.length} banks in course ${msg.courseId} (tab ${sender.tab?.id})`);
+      break;
+
     case "API_BASE_DETECTED":
       detectedApiBase = normalizeApiBase(msg.apiBase);
       debugLog("API", `Base path detected: ${detectedApiBase}`);
@@ -201,14 +212,28 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       break;
 
     case "REQUEST_BANK":
-      sendResponse({ 
-        bank: latestBank, 
-        apiBase: detectedApiBase,
-        hasAuth: capturedTokens.size > 0,
-        authCount: capturedTokens.size,
-        authDomains: Array.from(capturedTokens.keys())
+      // Check for stale bank list (different tab)
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const currentTabId = tabs[0]?.id;
+        let bankListResponse = null;
+        
+        if (latestBankList && latestBankList.tabId === currentTabId) {
+          bankListResponse = latestBankList;
+        } else if (latestBankList && latestBankList.tabId !== currentTabId) {
+          // Stale data from different tab - discard
+          latestBankList = null;
+        }
+        
+        sendResponse({ 
+          bank: latestBank, 
+          bankList: bankListResponse,
+          apiBase: detectedApiBase,
+          hasAuth: capturedTokens.size > 0,
+          authCount: capturedTokens.size,
+          authDomains: Array.from(capturedTokens.keys())
+        });
       });
-      break;
+      return true; // Async response
 
     case "EXPORT_BANK":
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -221,6 +246,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
         } else {
           sendError(null, "No active tab found. Please ensure you're on a Canvas quiz page.");
+        }
+      });
+      break;
+
+    case "EXPORT_BATCH":
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const activeTabId = tabs[0]?.id;
+        if (activeTabId) {
+          exportBatchClassicBanks(msg.banks, msg.courseId, activeTabId);
+        } else {
+          sendBatchError("No active tab found.");
         }
       });
       break;
@@ -1242,6 +1278,156 @@ function sendErrorWithData(tabId, data) {
     type: "error", 
     data,
     error: data.message
-  });
+  }).catch(() => {});
   debugLog("ERR", data.message);
+}
+
+// ========== BATCH EXPORT PIPELINE ==========
+
+// Retry utility with jitter
+async function retry(fn, attempts = 3, baseDelay = 500) {
+  for (let i = 0; i < attempts; i++) {
+    try { 
+      return await fn(); 
+    } catch (e) {
+      console.warn(`[Retry] Attempt ${i + 1}/${attempts} failed:`, e.message);
+      if (i === attempts - 1) throw e;
+      const delay = baseDelay * (i + 1) + Math.random() * 200;
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+}
+
+// Batch messaging helpers
+function sendBatchProgress(current, total, bankTitle, status) {
+  chrome.runtime.sendMessage({ 
+    channel: "export", 
+    type: "batch-progress", 
+    current, 
+    total, 
+    bankTitle,
+    status
+  }).catch(() => {}); // Ignore closed popup
+}
+
+function sendBatchComplete(results) {
+  // Clear badge
+  chrome.action.setBadgeText({ text: "" });
+  chrome.action.setBadgeBackgroundColor({ color: "#cccccc" });
+  
+  chrome.runtime.sendMessage({ 
+    channel: "export", 
+    type: "batch-complete", 
+    results
+  }).catch(() => {});
+}
+
+function sendBatchError(error) {
+  // Clear badge
+  chrome.action.setBadgeText({ text: "" });
+  chrome.action.setBadgeBackgroundColor({ color: "#cccccc" });
+  
+  chrome.runtime.sendMessage({ 
+    channel: "export", 
+    type: "batch-error", 
+    error
+  }).catch(() => {});
+}
+
+async function exportBatchClassicBanks(banks, courseId, tabId) {
+  const batchStartedAt = new Date().toISOString();
+  const batchStartTime = Date.now();
+  const totalBanks = banks.length;
+  
+  const results = { 
+    success: [], 
+    failed: [],
+    batchStartedAt,
+    totalBanks
+  };
+  
+  // Badge during export
+  chrome.action.setBadgeBackgroundColor({ color: "#1976d2" });
+  
+  for (let i = 0; i < banks.length; i++) {
+    const bank = banks[i];
+    const bankStartTime = Date.now();
+    
+    // Update badge
+    chrome.action.setBadgeText({ text: `${i + 1}/${totalBanks}` });
+    
+    // Send progress
+    sendBatchProgress(i + 1, totalBanks, bank.title, 'exporting');
+    
+    try {
+      // Wrap in retry logic with jitter
+      await retry(async () => {
+        await exportClassicBankForBatch(bank.id, courseId, tabId, bank.title, i, totalBanks, batchStartedAt);
+      }, 3, 500);
+      
+      results.success.push({ 
+        id: bank.id, 
+        title: bank.title,
+        index: i,
+        startedAt: new Date(bankStartTime).toISOString(),
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - bankStartTime
+      });
+    } catch (error) {
+      results.failed.push({ 
+        id: bank.id, 
+        title: bank.title, 
+        index: i,
+        error: error.message,
+        startedAt: new Date(bankStartTime).toISOString(),
+        failedAt: new Date().toISOString()
+      });
+    }
+    
+    // Delay between downloads with jitter
+    if (i < banks.length - 1) {
+      await new Promise(r => setTimeout(r, 500 + Math.random() * 200));
+    }
+  }
+  
+  results.totalDurationMs = Date.now() - batchStartTime;
+  results.batchCompletedAt = new Date().toISOString();
+  
+  sendBatchComplete(results);
+}
+
+async function exportClassicBankForBatch(bankId, courseId, tabId, bankTitle, batchIndex, batchTotal, batchStartedAt) {
+  const html = await fetchClassicBankHtml(tabId, courseId, bankId);
+  const parseResult = await parseHtmlViaContentScript(tabId, html);
+  const { bankTitle: parsedTitle, questions, groups, canvasSignature, warnings } = parseResult;
+  
+  if (questions.length === 0) {
+    throw new Error("No questions found in bank.");
+  }
+  
+  const exportData = generateClassicExport(bankId, courseId, parsedTitle || bankTitle, questions, groups, canvasSignature, warnings);
+  
+  // Add batch metadata
+  exportData.batch = {
+    batchExportedAt: batchStartedAt,
+    batchIndex: batchIndex,
+    batchTotal: batchTotal
+  };
+  
+  const filename = sanitizeFilename(parsedTitle || bankTitle || `classic_bank_${bankId}`) + "_export.json";
+  
+  // Download without saveAs dialog for batch
+  const jsonString = JSON.stringify(exportData, null, 2);
+  const base64 = btoa(unescape(encodeURIComponent(jsonString)));
+  const dataUrl = `data:application/json;base64,${base64}`;
+  
+  await new Promise((resolve, reject) => {
+    chrome.downloads.download({ url: dataUrl, filename, saveAs: false }, (downloadId) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else {
+        resolve(downloadId);
+      }
+    });
+  });
 }

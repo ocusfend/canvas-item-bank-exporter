@@ -508,6 +508,17 @@ window.addEventListener("CanvasExporter_AuthDetected", (e) => {
   }
 });
 
+// Listen for bank list detected (batch export)
+window.addEventListener("CanvasExporter_BankListDetected", (e) => {
+  const { courseId, banks } = e.detail;
+  console.log("[CanvasExporter] Bank list detected:", banks.length, "banks in course", courseId);
+  chrome.runtime.sendMessage({
+    type: "BANK_LIST_DETECTED",
+    courseId,
+    banks
+  });
+});
+
 // ========== API PROXY VIA PAGE CONTEXT ==========
 // Route API calls through inject.js (page context) to bypass CORS
 

@@ -149,8 +149,11 @@ export function isSupported(canvasType) {
 // ========== SANITIZATION ==========
 export function sanitizeFilename(name) {
   return String(name || 'export')
-    .replace(/[^a-zA-Z0-9_-]/g, '_')
-    .substring(0, 50);
+    .normalize("NFKD")                        // Decompose Unicode
+    .replace(/[^\p{L}\p{N}\-_. ]+/gu, "_")   // Unicode-safe: keep letters, numbers, dash, underscore, dot, space
+    .replace(/_{2,}/g, "_")                   // Collapse multiple underscores
+    .trim()
+    .slice(0, 120);                           // Reasonable filename length
 }
 
 // ========== SKIPPED ITEMS REPORTING ==========
