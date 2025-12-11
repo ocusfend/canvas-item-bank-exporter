@@ -431,28 +431,30 @@ function stripHtml(html) {
 }
 
 function transformItemToJSON(item) {
-  const canvasType = item.question_type || item.interaction_type;
-  const qbType = mapCanvasTypeToQBType(canvasType);
+  try {
+    const canvasType = item.question_type || item.interaction_type;
+    const qbType = mapCanvasTypeToQBType(canvasType);
 
-  // Debug logging for answer extraction
-  console.log(`[Transform] Item ${item.id}: canvasType="${canvasType}" → qbType="${qbType}"`);
-  console.log(`[Transform] Item ${item.id} data:`, {
-    hasInteractionData: !!item.interaction_data,
-    hasScoringData: !!item.scoring_data,
-    scoringValue: item.scoring_data?.value,
-    choicesCount: item.interaction_data?.choices?.length || 0,
-    hasAnswers: !!item.answers,
-    hasChoices: !!item.choices
-  });
+    // Debug logging for answer extraction
+    console.log(`[Transform] Item ${item.id}: canvasType="${canvasType}" → qbType="${qbType}"`);
+    console.log(`[Transform] Item ${item.id} data:`, {
+      hasInteractionData: !!item.interaction_data,
+      hasScoringData: !!item.scoring_data,
+      scoringValue: item.scoring_data?.value,
+      choicesCount: Array.isArray(item.interaction_data?.choices) ? item.interaction_data.choices.length : 0,
+      hasAnswers: !!item.answers,
+      hasChoices: !!item.choices
+    });
 
-  const body = item.question_text || item.stimulus || item.item_body || item.body || '';
-  let points = typeof item.points_possible === 'number' ? item.points_possible : 1;
+    const body = item.question_text || item.stimulus || item.item_body || item.body || '';
+    let points = typeof item.points_possible === 'number' ? item.points_possible : 1;
 
-  let answers = [];
+    let answers = [];
 
-  // Multiple Choice / Multiple Response
-  if (qbType === 'MC' || qbType === 'MR') {
-    const choices = item.interaction_data?.choices || [];
+    // Multiple Choice / Multiple Response
+    if (qbType === 'MC' || qbType === 'MR') {
+      const rawChoices = item.interaction_data?.choices;
+      const choices = Array.isArray(rawChoices) ? rawChoices : [];
     const scoringValue = item.scoring_data?.value;
     let correctIds = new Set();
     if (Array.isArray(scoringValue)) {
@@ -559,11 +561,12 @@ function transformItemToJSON(item) {
       answers = [];
     }
   }
-  // Categorization - scoring_data.value is {categoryId: [answerIds]}
-  else if (qbType === 'CAT') {
-    const scoringValue = item.scoring_data?.value;
-    const categories = item.interaction_data?.categories || [];
-    const choices = item.interaction_data?.choices || [];
+    // Categorization - scoring_data.value is {categoryId: [answerIds]}
+    else if (qbType === 'CAT') {
+      const scoringValue = item.scoring_data?.value;
+      const categories = item.interaction_data?.categories || [];
+      const rawChoices = item.interaction_data?.choices;
+      const choices = Array.isArray(rawChoices) ? rawChoices : [];
     
     if (scoringValue && typeof scoringValue === 'object' && !Array.isArray(scoringValue)) {
       // Build category-answer mappings
@@ -584,10 +587,11 @@ function transformItemToJSON(item) {
       answers = [];
     }
   }
-  // Ordering - scoring_data.value is array of IDs in correct order
-  else if (qbType === 'ORD') {
-    const scoringValue = item.scoring_data?.value;
-    const choices = item.interaction_data?.choices || [];
+    // Ordering - scoring_data.value is array of IDs in correct order
+    else if (qbType === 'ORD') {
+      const scoringValue = item.scoring_data?.value;
+      const rawChoices = item.interaction_data?.choices;
+      const choices = Array.isArray(rawChoices) ? rawChoices : [];
     
     if (Array.isArray(scoringValue)) {
       // Map IDs to their text in correct order
@@ -811,6 +815,22 @@ function transformItemToJSON(item) {
     rawInteractionData: item.interaction_data || null,
     rawScoringData: item.scoring_data || null
   };
+  } catch (err) {
+    console.error(`[Transform Error] Item ${item.id}:`, err);
+    // Return a minimal valid item with raw data preserved for debugging
+    return {
+      id: item.id,
+      type: 'UNKNOWN',
+      originalType: item.question_type || item.interaction_type || 'unknown',
+      title: item.title || item.question_name || 'Error during transform',
+      body: item.question_text || item.stimulus || item.item_body || item.body || '',
+      points: typeof item.points_possible === 'number' ? item.points_possible : 1,
+      error: err.message,
+      answers: [],
+      rawInteractionData: item.interaction_data || null,
+      rawScoringData: item.scoring_data || null
+    };
+  }
 }
 
 // ========== API FUNCTIONS (Page context fetch using session cookies) ==========
