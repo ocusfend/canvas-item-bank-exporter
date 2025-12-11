@@ -428,65 +428,71 @@ function stripHtml(html) {
 }
 
 function transformItemToJSON(item) {
-  const qbType = mapCanvasTypeToQBType(item.question_type || item.interaction_type);
-  const interactionData = item.interaction_data || {};
-  const scoringData = item.scoring_data || {};
-  
+  const canvasType = item.question_type || item.interaction_type;
+  const qbType = mapCanvasTypeToQBType(canvasType);
+
+  const body = item.question_text || item.stimulus || item.item_body || item.body || '';
+  let points = typeof item.points_possible === 'number' ? item.points_possible : 1;
+
   let answers = [];
-  
-  // Extract answers based on question type
-  if (qbType === 'TF') {
-    // True/False: Build from true_choice/false_choice
-    const correctValue = scoringData.value; // boolean
-    answers = [
-      { id: 'true', text: stripHtml(interactionData.true_choice) || 'True', correct: correctValue === true },
-      { id: 'false', text: stripHtml(interactionData.false_choice) || 'False', correct: correctValue === false }
-    ];
-  } else if (qbType === 'MC' || qbType === 'MR') {
-    // Multiple Choice/Answer: Extract from interaction_data.choices
-    const choices = interactionData.choices || [];
-    const correctIds = Array.isArray(scoringData.value) ? scoringData.value : [];
-    answers = choices.map(choice => ({
-      id: choice.id,
-      text: stripHtml(choice.item_body || choice.body || ''),
-      correct: correctIds.includes(choice.id)
+
+  // Multiple Choice / Multiple Response
+  if (qbType === 'MC' || qbType === 'MR') {
+    const choices = item.interaction_data?.choices || [];
+    const scoringValue = item.scoring_data?.value;
+    let correctIds = new Set();
+    if (Array.isArray(scoringValue)) {
+      correctIds = new Set(scoringValue);
+    } else if (typeof scoringValue === 'string') {
+      correctIds = new Set([scoringValue]);
+    }
+    answers = choices.map((choice, idx) => ({
+      id: choice.id || `choice_${idx}`,
+      text: stripHtml(choice.item_body || choice.text || choice.html || choice.body || ''),
+      correct: correctIds.has(choice.id)
     }));
-  } else if (qbType === 'SA') {
-    // Short Answer / Fill-in-blank: Extract correct answers from scoring_data
-    const blanks = scoringData.value || [];
-    if (Array.isArray(blanks)) {
-      answers = blanks.map((blank, idx) => ({
+  }
+  // True/False
+  else if (qbType === 'TF') {
+    const trueText = stripHtml(item.interaction_data?.true_choice) || 'True';
+    const falseText = stripHtml(item.interaction_data?.false_choice) || 'False';
+    const correctIsTrue = item.scoring_data?.value === true;
+    answers = [
+      { id: 'true', text: trueText, correct: !!correctIsTrue },
+      { id: 'false', text: falseText, correct: !correctIsTrue }
+    ];
+  }
+  // Short Answer / Fill-in-blank
+  else if (qbType === 'SA') {
+    const scoringValue = item.scoring_data?.value;
+    if (Array.isArray(scoringValue)) {
+      answers = scoringValue.map((blank, idx) => ({
         id: blank.id || `blank_${idx}`,
-        text: blank.scoring_data?.value?.[0] || blank.scoring_data?.blank_text || '',
+        text: blank.scoring_data?.blank_text ||
+              (Array.isArray(blank.scoring_data?.value) ? blank.scoring_data.value.join(' | ') : ''),
         correct: true
       }));
     }
   }
-  
-  // Fallback: try legacy answer formats if no answers extracted
+
+  // Fallback: legacy answer formats
   if (answers.length === 0) {
-    const legacyAnswers = item.answers || item.choices || [];
-    answers = legacyAnswers.map((answer, idx) => ({
+    const baseAnswers = item.answers || item.choices || [];
+    answers = baseAnswers.map((answer, idx) => ({
       id: answer.id || `answer_${idx}`,
-      text: stripHtml(answer.text || answer.html || answer.item_body || answer.body || ''),
+      text: stripHtml(answer.text || answer.html || answer.body || ''),
       correct: answer.weight > 0 || answer.correct === true
     }));
   }
-  
-  // Extract points - handle scoring_data properly (avoid arrays/objects)
-  let points = item.points_possible || 1;
-  if (typeof scoringData.value === 'number') {
-    points = scoringData.value;
-  }
-  
+
   return {
     id: item.id,
     type: qbType,
-    originalType: item.question_type || item.interaction_type,
+    originalType: canvasType,
     title: item.title || item.question_name || 'Untitled',
-    body: stripHtml(item.question_text || item.stimulus || item.item_body || item.body || ''),
-    points: points,
-    answers: answers,
+    body,
+    points,
+    answers,
     feedback: {
       correct: item.correct_comments || item.feedback?.correct || '',
       incorrect: item.incorrect_comments || item.feedback?.incorrect || '',
