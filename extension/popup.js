@@ -107,26 +107,36 @@ versionEl.textContent = chrome.runtime.getManifest().version;
 
 const helpContent = document.getElementById('help-content');
 
-function updateHelpContent(mode) {
-  if (mode === 'new-quiz') {
-    helpContent.innerHTML = `
+const HELP_MODES = {
+  'new-quiz': {
+    title: 'Help • New Quizzes Mode',
+    content: `
       <p><strong>New Quizzes Item Banks</strong> use Canvas's modern quiz system.</p>
       <p>Questions are fetched via the Canvas Item Bank API.</p>
       <p>Export saves all questions from this bank as a single JSON file.</p>
-    `;
-  } else if (mode === 'classic-batch') {
-    helpContent.innerHTML = `
+    `
+  },
+  'classic-batch': {
+    title: 'Help • Classic Quiz Mode',
+    content: `
       <p><strong>Classic Quiz Question Banks</strong> are the original Canvas quiz storage system.</p>
       <p><strong>Batch export</strong> saves each selected bank as a separate JSON file.</p>
       <p>Use <kbd>Ctrl+A</kbd> to select all, <kbd>Ctrl+Enter</kbd> to export.</p>
-    `;
-  } else {
-    // Default/no bank detected
-    helpContent.innerHTML = `
+    `
+  },
+  'default': {
+    title: 'Help • Waiting for Detection',
+    content: `
       <p>Navigate to a <strong>Question Bank</strong> page in Canvas to export questions.</p>
       <p>Supports both <strong>Classic Quiz</strong> and <strong>New Quizzes</strong> Item Banks.</p>
-    `;
+    `
   }
+};
+
+function updateHelpContent(mode) {
+  const modeConfig = HELP_MODES[mode] || HELP_MODES['default'];
+  helpContent.innerHTML = modeConfig.content;
+  helpIcon.title = modeConfig.title;
 }
 
 // Initialize help content
