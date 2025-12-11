@@ -398,7 +398,7 @@ async function exportBank(bankId, tabId) {
 // ========== JSON EXPORT GENERATION ==========
 function generateJSONExport(bank, items) {
   return {
-    exportVersion: "2.1",
+    exportVersion: "2.2",
     exportedAt: new Date().toISOString(),
     bank: {
       id: bank.id,

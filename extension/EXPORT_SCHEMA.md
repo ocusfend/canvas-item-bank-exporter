@@ -415,7 +415,7 @@ The export produces a single JSON file containing all items from a Canvas item b
 
 ```json
 {
-  "exportVersion": "2.1",
+  "exportVersion": "2.2",
   "exportedAt": "2024-01-15T10:30:00.000Z",
   "bank": {
     "id": "550e8400-e29b-41d4-a716-446655440000",
