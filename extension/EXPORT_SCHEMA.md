@@ -1,4 +1,4 @@
-# Canvas Item Bank Export Schema v2.1
+# Canvas Item Bank Export Schema v2.2
 
 This document describes the JSON export format produced by the Canvas Item Bank Exporter extension.
 
@@ -12,7 +12,7 @@ The export produces a single JSON file containing all items from a Canvas item b
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `exportVersion` | string | Schema version (currently `"2.1"`) |
+| `exportVersion` | string | Schema version (currently `"2.2"`) |
 | `exportedAt` | string | ISO 8601 timestamp of export |
 | `bank` | object | Bank metadata |
 | `summary` | object | Export statistics |
@@ -261,15 +261,20 @@ The export produces a single JSON file containing all items from a Canvas item b
     {
       "id": "question_uuid",
       "questionText": "Left side text",
+      "answerId": "answer_uuid",
       "answerText": "Right side match",
       "correct": true
     }
   ],
   "matchingSettings": {
     "questions": [
-      { "id": "q_uuid", "text": "Question text", "answerText": "Answer text" }
+      { "id": "q_uuid", "text": "Question text" }
     ],
-    "shuffleQuestions": false
+    "answers": [
+      { "id": "a_uuid", "text": "Answer text" }
+    ],
+    "shuffleQuestions": false,
+    "shuffleAnswers": false
   }
 }
 ```
@@ -290,10 +295,12 @@ The export produces a single JSON file containing all items from a Canvas item b
     "categories": [
       { "id": "cat_uuid", "text": "Category name" }
     ],
-    "choices": [
-      { "id": "choice_uuid", "text": "Item text" }
+    "distractors": [
+      { "id": "distractor_uuid", "text": "Item text" }
     ],
-    "scoreMethod": "allOrNothing"
+    "scoreMethod": "allOrNothing",
+    "shuffleCategories": false,
+    "shuffleDistractors": true
   }
 }
 ```
@@ -319,6 +326,8 @@ The export produces a single JSON file containing all items from a Canvas item b
   "orderingSettings": {
     "topLabel": "First",
     "bottomLabel": "Last",
+    "includeLabels": true,
+    "displayAsParagraph": false,
     "choices": [
       { "id": "choice_uuid", "text": "Item text", "position": 1 }
     ]
@@ -340,7 +349,13 @@ The export produces a single JSON file containing all items from a Canvas item b
   ],
   "hotSpotSettings": {
     "imageUrl": "https://...",
-    "hotspotsCount": 2
+    "hotspots": [
+      {
+        "id": "hotspot_uuid",
+        "type": "circle",
+        "coordinates": { "x": 100, "y": 150, "radius": 50 }
+      }
+    ]
   }
 }
 ```
@@ -362,7 +377,10 @@ The export produces a single JSON file containing all items from a Canvas item b
       { "name": "x", "min": 1, "max": 10, "precision": 0 }
     ],
     "answerCount": 5,
-    "formula": "x * y"
+    "formula": "x * y",
+    "solutions": [
+      { "id": "solution_0", "inputs": { "x": 5, "y": 3 }, "output": 15 }
+    ]
   }
 }
 ```
@@ -499,6 +517,7 @@ The export produces a single JSON file containing all items from a Canvas item b
 
 | Version | Changes |
 |---------|---------|
+| 2.2 | Enhanced type-specific settings: matchingSettings now includes separate answers array and shuffleAnswers; categorizationSettings uses distractors instead of choices with shuffle options; orderingSettings adds includeLabels and displayAsParagraph; hotSpotSettings now includes full hotspots array; formulaSettings includes solutions array. Added normalizeToArray handling for object-style data structures. |
 | 2.1 | All question types exported (no filtering), added type mappings for MAT, CAT, ORD, HS, FORM, DD, DRAW, HL, CLOZE |
 | 2.0 | Added comprehensive metadata, raw data preservation, type-specific settings |
 | 1.0 | Initial export format with basic question types |
