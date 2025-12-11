@@ -1,3 +1,65 @@
+// ========== THEME MANAGEMENT ==========
+
+const themeToggle = document.getElementById('theme-toggle');
+const THEME_KEY = 'themePreference';
+
+// Get system preference
+function getSystemTheme() {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+// Apply theme to document
+function applyTheme(theme) {
+  const effectiveTheme = theme === 'system' ? getSystemTheme() : theme;
+  document.documentElement.setAttribute('data-theme', effectiveTheme);
+}
+
+// Update toggle button states
+function updateThemeButtons(activeTheme) {
+  themeToggle.querySelectorAll('button').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.theme === activeTheme);
+  });
+}
+
+// Load and apply saved theme
+function loadTheme() {
+  chrome.storage.local.get([THEME_KEY], (result) => {
+    const savedTheme = result[THEME_KEY] || 'system';
+    applyTheme(savedTheme);
+    updateThemeButtons(savedTheme);
+  });
+}
+
+// Save theme preference
+function saveTheme(theme) {
+  chrome.storage.local.set({ [THEME_KEY]: theme });
+}
+
+// Listen for system theme changes (when in "system" mode)
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+  chrome.storage.local.get([THEME_KEY], (result) => {
+    if (result[THEME_KEY] === 'system' || !result[THEME_KEY]) {
+      applyTheme('system');
+    }
+  });
+});
+
+// Theme toggle click handler
+themeToggle.addEventListener('click', (e) => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  
+  const theme = btn.dataset.theme;
+  applyTheme(theme);
+  updateThemeButtons(theme);
+  saveTheme(theme);
+});
+
+// Initialize theme on load (call immediately)
+loadTheme();
+
+// ========== UI ELEMENT REFERENCES ==========
+
 const statusEl = document.getElementById('status');
 const exportBtn = document.getElementById('exportBtn');
 const refreshBtn = document.getElementById('refreshBtn');
@@ -497,7 +559,7 @@ chrome.runtime.onMessage.addListener((msg) => {
         progressText.innerHTML = `
           <strong>${msg.data.reason || 'Export failed'}</strong><br>
           ${msg.data.message}<br>
-          <em style="color: #666; font-size: 11px;">Fix: ${msg.data.fix || 'Try again'}</em>
+          <em style="color: var(--text-muted); font-size: 11px;">Fix: ${msg.data.fix || 'Try again'}</em>
         `;
       } else {
         progressText.textContent = msg.error || 'Export failed';
@@ -546,7 +608,7 @@ function handleBatchComplete(results) {
   
   if (failed.length > 0) {
     const failedList = failed.map(f => `• ${f.title}: ${f.error}`).join('<br>');
-    progressText.innerHTML += `<div class="batch-summary" style="color: #d32f2f; margin-top: 8px;">Failed:<br>${failedList}</div>`;
+    progressText.innerHTML += `<div class="batch-summary" style="color: var(--error-text); margin-top: 8px;">Failed:<br>${failedList}</div>`;
   }
   
   progressArea.classList.add('success');
