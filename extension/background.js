@@ -314,7 +314,21 @@ async function exportBank(bankId, tabId) {
     sendProgress(tabId, 2, "Fetching items...");
     let entries;
     try {
-      entries = await fetchAllEntries(apiBase, bankId);
+      let raw = await fetchAllEntries(apiBase, bankId);
+      
+      // DEFENSIVE NORMALIZATION:
+      // If inject.js ever returns wrapped data (e.g., { total, entries: [...] }),
+      // ensure exporter always receives an array.
+      if (Array.isArray(raw)) {
+        entries = raw;
+      } else if (raw && typeof raw === "object" && raw.entries) {
+        console.log("[CanvasExporter] Normalizing wrapped response to array");
+        entries = raw.entries;
+      } else {
+        console.warn("[CanvasExporter] Unexpected response shape, defaulting to empty array");
+        entries = [];
+      }
+      console.log("[CanvasExporter] Normalized entries:", entries.length);
     } catch (e) {
       // Check for token expiration errors
       if (e.message.includes('TOKEN_EXPIRED') || e.message.includes('401')) {

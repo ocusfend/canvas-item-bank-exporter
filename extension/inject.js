@@ -425,11 +425,23 @@
       // CACHE-FIRST STRATEGY: Check cache and return immediately if found
       const cached = findCachedResponse(url);
       if (cached) {
-        console.log("%c[CanvasExporter] ★ CACHE HIT - returning immediately:", "color:#00bcd4;font-weight:bold", url.slice(0, 80));
+        console.log("%c[CanvasExporter] ★ CACHE HIT - returning immediately:", "color:#00bcd4;font-weight:bold", url.slice(0, 120));
         console.log("[CanvasExporter] Cache age:", Math.round(cached.age / 1000), "seconds");
-        
+
+        let responseData = cached.data;
+
+        // CRITICAL FIX:
+        // Canvas search responses look like: { total, entries, filters }
+        // Fresh paginated fetches return an array.
+        // Cache must match fresh fetch format.
+        if (paginated && responseData && typeof responseData === "object" && !Array.isArray(responseData)) {
+          // Normalize to an array of entries
+          responseData = responseData.entries || [];
+          console.log("[CanvasExporter] Extracted", responseData.length, "entries from cached object for paginated request");
+        }
+
         window.dispatchEvent(new CustomEvent("CanvasExporter_FetchResponse", {
-          detail: { requestId, success: true, data: cached.data }
+          detail: { requestId, success: true, data: responseData }
         }));
         return; // CRITICAL: Stop here, don't make network call
       }
