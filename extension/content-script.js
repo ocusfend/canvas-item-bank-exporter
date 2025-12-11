@@ -266,7 +266,17 @@ function extractClassicAnswers(questionDiv, questionType, questionId, warnings) 
     }
   });
   
-  return answers;
+  // Filter out empty/placeholder answers (common in FIMB and MDD questions)
+  const filteredAnswers = answers.filter(answer => {
+    // Keep numerical answers (they don't have text field)
+    if (answer.numericalType) return true;
+    
+    // Filter out answers with empty text
+    const hasText = answer.text && answer.text.trim().length > 0;
+    return hasText;
+  });
+  
+  return filteredAnswers;
 }
 
 function extractMatchingPairs(questionDiv, questionId, warnings) {
