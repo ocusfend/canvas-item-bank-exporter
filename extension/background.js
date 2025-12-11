@@ -430,6 +430,17 @@ function stripHtml(html) {
   return (html || '').replace(/<[^>]*>/g, '').trim();
 }
 
+// Helper to convert object-style choices/categories to array
+function normalizeToArray(data) {
+  if (Array.isArray(data)) {
+    return data;
+  }
+  if (data && typeof data === 'object') {
+    return Object.values(data);
+  }
+  return [];
+}
+
 function transformItemToJSON(item) {
   try {
     const canvasType = item.question_type || item.interaction_type;
@@ -561,53 +572,72 @@ function transformItemToJSON(item) {
       answers = [];
     }
   }
-    // Categorization - scoring_data.value is {categoryId: [answerIds]}
+    // Categorization - scoring_data.value can be array or object
     else if (qbType === 'CAT') {
       const scoringValue = item.scoring_data?.value;
-      const categories = item.interaction_data?.categories || [];
-      const rawChoices = item.interaction_data?.choices;
-      const choices = Array.isArray(rawChoices) ? rawChoices : [];
-    
-    if (scoringValue && typeof scoringValue === 'object' && !Array.isArray(scoringValue)) {
-      // Build category-answer mappings
-      answers = categories.map((cat, idx) => {
-        const answerIds = scoringValue[cat.id] || [];
-        const answerTexts = answerIds.map(id => {
-          const choice = choices.find(c => c.id === id);
-          return stripHtml(choice?.item_body || choice?.body || id);
+      const categories = normalizeToArray(item.interaction_data?.categories);
+      const distractors = normalizeToArray(item.interaction_data?.distractors);
+      const allChoices = [...categories, ...distractors];
+      
+      // Handle array-style scoring: [{id, scoring_data: {value: [...]}}]
+      if (Array.isArray(scoringValue)) {
+        answers = scoringValue.map((catScore, idx) => {
+          const categoryId = catScore.id;
+          const answerIds = catScore.scoring_data?.value || [];
+          const category = categories.find(c => c.id === categoryId);
+          
+          const answerTexts = answerIds.map(id => {
+            const choice = distractors.find(c => c.id === id);
+            return stripHtml(choice?.item_body || choice?.body || id);
+          });
+          
+          return {
+            id: categoryId,
+            categoryText: stripHtml(category?.item_body || category?.body || ''),
+            answers: answerTexts,
+            correct: true
+          };
         });
-        return {
-          id: cat.id || `cat_${idx}`,
-          categoryText: stripHtml(cat.item_body || cat.body || cat.text || ''),
-          answers: answerTexts,
-          correct: true
-        };
-      });
-    } else {
-      answers = [];
+      }
+      // Handle object-style scoring: {categoryId: [answerIds]} (fallback)
+      else if (scoringValue && typeof scoringValue === 'object') {
+        answers = categories.map((cat, idx) => {
+          const answerIds = scoringValue[cat.id] || [];
+          const answerTexts = answerIds.map(id => {
+            const choice = distractors.find(c => c.id === id);
+            return stripHtml(choice?.item_body || choice?.body || id);
+          });
+          return {
+            id: cat.id || `cat_${idx}`,
+            categoryText: stripHtml(cat.item_body || cat.body || cat.text || ''),
+            answers: answerTexts,
+            correct: true
+          };
+        });
+      } else {
+        answers = [];
+      }
     }
-  }
     // Ordering - scoring_data.value is array of IDs in correct order
     else if (qbType === 'ORD') {
       const scoringValue = item.scoring_data?.value;
-      const rawChoices = item.interaction_data?.choices;
-      const choices = Array.isArray(rawChoices) ? rawChoices : [];
-    
-    if (Array.isArray(scoringValue)) {
-      // Map IDs to their text in correct order
-      answers = scoringValue.map((id, idx) => {
-        const choice = choices.find(c => c.id === id);
-        return {
-          id: id,
-          text: stripHtml(choice?.item_body || choice?.body || choice?.text || id),
-          position: idx + 1,
-          correct: true
-        };
-      });
-    } else {
-      answers = [];
+      const choices = normalizeToArray(item.interaction_data?.choices);
+      
+      if (Array.isArray(scoringValue)) {
+        // Map IDs to their text in correct order
+        answers = scoringValue.map((id, idx) => {
+          const choice = choices.find(c => c.id === id);
+          return {
+            id: id,
+            text: stripHtml(choice?.item_body || choice?.body || choice?.text || id),
+            position: idx + 1,
+            correct: true
+          };
+        });
+      } else {
+        answers = [];
+      }
     }
-  }
   // Hot Spot - scoring_data.value is array of {id, type, coordinates}
   else if (qbType === 'HS') {
     const scoringValue = item.scoring_data?.value;
