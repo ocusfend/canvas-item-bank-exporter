@@ -133,10 +133,13 @@ const HELP_MODES = {
   }
 };
 
+const modeDot = document.getElementById('mode-dot');
+
 function updateHelpContent(mode) {
   const modeConfig = HELP_MODES[mode] || HELP_MODES['default'];
   helpContent.innerHTML = modeConfig.content;
   helpIcon.title = modeConfig.title;
+  modeDot.dataset.mode = mode;
 }
 
 // Initialize help content
