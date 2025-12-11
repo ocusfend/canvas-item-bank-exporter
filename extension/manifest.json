@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Canvas Quiz Bank Exporter",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Export Canvas Classic Quiz Question Banks and New Quizzes Item Banks as JSON files",
 
   "permissions": ["storage", "scripting", "downloads"],
