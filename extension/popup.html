@@ -4,11 +4,12 @@
   <meta charset="UTF-8">
   <style>
     body { 
-      width: 360px; 
+      width: 380px; 
       padding: 16px; 
       font-family: system-ui, -apple-system, sans-serif;
       font-size: 14px;
       margin: 0;
+      position: relative;
     }
     h2 { 
       margin: 0 0 12px 0; 
@@ -17,6 +18,35 @@
       align-items: center;
       gap: 8px;
     }
+    
+    /* Help icon and popup */
+    #help-icon {
+      position: absolute;
+      top: 16px;
+      right: 44px;
+      cursor: pointer;
+      font-size: 14px;
+      opacity: 0.6;
+      transition: opacity 0.15s ease;
+    }
+    #help-icon:hover { opacity: 1; }
+    
+    #help-popup {
+      position: absolute;
+      top: 40px;
+      right: 16px;
+      background: white;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 12px;
+      width: 220px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      z-index: 100;
+    }
+    #help-popup.hidden { display: none; }
+    #help-popup p { margin: 0 0 8px; }
+    #help-popup p:last-child { margin-bottom: 0; }
     
     .status { 
       padding: 12px; 
@@ -72,12 +102,140 @@
       cursor: not-allowed; 
     }
     
+    /* Bank list area for batch export */
+    #bank-list-area {
+      display: none;
+      margin-bottom: 12px;
+    }
+    #bank-list-header {
+      padding: 8px;
+      background: #f5f5f5;
+      border-radius: 8px 8px 0 0;
+      border: 1px solid #e0e0e0;
+      border-bottom: none;
+    }
+    #bank-list-header label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .bank-list {
+      max-height: 200px;
+      overflow-y: auto;
+      border: 1px solid #e0e0e0;
+    }
+    .bank-item {
+      display: flex;
+      align-items: center;
+      padding: 8px 12px;
+      border-bottom: 1px solid #f0f0f0;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    .bank-item:last-child {
+      border-bottom: none;
+    }
+    .bank-item:hover {
+      background: #f5f5f5;
+    }
+    .bank-item.selected {
+      background: #e3f2fd;
+    }
+    .bank-item label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+      cursor: pointer;
+    }
+    .bank-item .bank-title {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .bank-item .bank-count {
+      font-size: 11px;
+      color: #888;
+      margin-right: 4px;
+    }
+    
+    /* Preview icon */
+    .bank-preview {
+      opacity: 0.4;
+      cursor: pointer;
+      transition: opacity 0.15s ease;
+      font-size: 12px;
+      padding: 2px 4px;
+    }
+    .bank-preview:hover { opacity: 1; }
+    
+    /* Selection summary */
+    .selection-summary {
+      padding: 8px 12px;
+      font-size: 12px;
+      color: #666;
+      background: #fafafa;
+      border: 1px solid #e0e0e0;
+      border-top: none;
+      border-radius: 0 0 8px 8px;
+      text-align: center;
+    }
+    .selection-summary:empty { display: none; }
+    
+    /* Failed bank highlighting */
+    .bank-item.failed {
+      background: #ffebee;
+      border-left: 4px solid #d32f2f;
+      transition: background 0.3s ease, border-left 0.3s ease;
+    }
+    
+    /* Disabled state during export */
+    .bank-list.disabled {
+      pointer-events: none;
+      opacity: 0.6;
+    }
+    
+    /* Export batch button */
+    #exportBatchBtn {
+      display: none;
+      width: 100%;
+      padding: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      background: #1976d2;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      margin-top: 8px;
+      transition: background 0.2s ease;
+    }
+    #exportBatchBtn:hover:not(:disabled) { 
+      background: #1565c0; 
+    }
+    #exportBatchBtn:disabled { 
+      background: #e0e0e0; 
+      color: #999;
+      cursor: not-allowed; 
+    }
+    
+    /* In-progress button state */
+    #exportBatchBtn.in-progress {
+      background: #ffb300 !important;
+      color: #333;
+    }
+    
     #progress-area {
       display: none;
       margin-top: 12px;
       padding: 12px;
       background: #f5f5f5;
       border-radius: 8px;
+      position: relative;
+      overflow: hidden;
     }
     #progress-step { 
       font-weight: 600; 
@@ -100,7 +258,7 @@
       height: 100%;
       background: #1976d2;
       border-radius: 4px;
-      transition: width 0.2s ease-out;
+      transition: width 0.2s ease-in-out;
       width: 0%;
     }
     #progress-item {
@@ -131,6 +289,27 @@
     }
     .error #progress-step { 
       color: #c62828 !important; 
+    }
+    
+    /* Shine animation on success */
+    @keyframes shine {
+      0% { background-position: -200px 0; }
+      100% { background-position: 200px 0; }
+    }
+    .shine::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: linear-gradient(90deg, 
+        rgba(255,255,255,0) 0%,
+        rgba(255,255,255,0.4) 50%,
+        rgba(255,255,255,0) 100%);
+      background-size: 200px 100%;
+      animation: shine 1.2s ease-out;
+      pointer-events: none;
     }
     
     #type-summary {
@@ -235,6 +414,32 @@
       background: #f0f0f0;
     }
     
+    /* Floating mini-status */
+    #floating-status {
+      position: fixed;
+      bottom: 8px;
+      right: 8px;
+      background: #1976d2;
+      color: white;
+      padding: 4px 10px;
+      font-size: 11px;
+      border-radius: 12px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+      opacity: 0;
+      transition: opacity 0.25s ease;
+      pointer-events: none;
+      z-index: 50;
+    }
+    #floating-status.visible {
+      opacity: 1;
+    }
+    
+    .batch-summary {
+      font-size: 12px;
+      color: #666;
+      margin-top: 4px;
+    }
+    
     .footer {
       margin-top: 16px;
       padding-top: 12px;
@@ -260,6 +465,13 @@
     <button id="refreshBtn" class="refresh-btn" title="Re-detect bank">🔄</button>
   </h2>
   
+  <span id="help-icon" title="What is this?">❔</span>
+  <div id="help-popup" class="hidden">
+    <p><strong>Classic Quiz Question Banks</strong> are the original Canvas quiz storage system.</p>
+    <p><strong>Batch export</strong> saves each selected bank as a separate JSON file.</p>
+    <p>This extension does not support New Quizzes Item Banks from this page.</p>
+  </div>
+  
   <div id="auth-status" class="pending">
     <span class="indicator"></span>
     <span id="auth-text">No auth token captured</span>
@@ -269,7 +481,22 @@
     Waiting for bank detection...
   </div>
   
+  <!-- Bank list selection area (for batch export) -->
+  <div id="bank-list-area">
+    <div id="bank-list-header">
+      <label id="select-all-label">
+        <input type="checkbox" id="select-all-checkbox">
+        <span>Select All (<span id="bank-count">0</span> banks)</span>
+      </label>
+    </div>
+    <div id="bank-list" class="bank-list">
+      <!-- Bank checkboxes inserted here -->
+    </div>
+    <div id="selection-summary" class="selection-summary"></div>
+  </div>
+  
   <button id="exportBtn" disabled>📄 Export JSON</button>
+  <button id="exportBatchBtn" title="Select at least one bank">📄 Export Selected (0)</button>
   
   <div id="progress-area">
     <div id="progress-step">Step 1/4</div>
@@ -292,6 +519,8 @@
     </div>
     <div id="warnings-list"></div>
   </div>
+  
+  <div id="floating-status"></div>
   
   <div class="footer">
     <span>v<span id="version"></span></span>

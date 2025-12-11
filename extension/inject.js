@@ -581,5 +581,89 @@
     console.log("[CanvasExporter] MutationObserver running");
   }
 
-  console.log("[CanvasExporter] Phase 4 page script active (JWT capture enabled)");
+  // ------------------------------------------------------
+  // BATCH EXPORT: Bank List Page Detection
+  // ------------------------------------------------------
+
+  // Wait for Canvas AJAX content to load before scraping
+  async function waitForBankElements(maxWaitMs = 5000) {
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < maxWaitMs) {
+      const banks = document.querySelectorAll('.question_bank[id^="question_bank_"]:not(#question_bank_blank)');
+      if (banks.length > 0) {
+        // Extra wait to ensure all banks are loaded
+        await new Promise(r => setTimeout(r, 200));
+        return document.querySelectorAll('.question_bank[id^="question_bank_"]:not(#question_bank_blank)');
+      }
+      await new Promise(r => setTimeout(r, 100));
+    }
+    
+    return document.querySelectorAll('.question_bank[id^="question_bank_"]:not(#question_bank_blank)');
+  }
+
+  function scrapeBankListFromDivs(bankDivs, courseId) {
+    const banks = [];
+    
+    bankDivs.forEach(div => {
+      const idMatch = div.id?.match(/question_bank_(\d+)/);
+      if (!idMatch) return;
+      
+      const bankId = idMatch[1];
+      const titleEl = div.querySelector('.header_content a.title');
+      const title = titleEl?.textContent?.trim() || `Bank ${bankId}`;
+      
+      // Localize-insensitive: extract first number (works with "12 Questions", "12 Preguntas", etc.)
+      const contentDiv = div.querySelector('.content > div:first-child');
+      const text = contentDiv?.textContent || "0";
+      const countMatch = text.match(/(\d+)/);
+      const questionCount = countMatch ? parseInt(countMatch[1], 10) : 0;
+      
+      banks.push({
+        id: bankId,
+        title,
+        questionCount,
+        courseId,
+        type: 'classic'
+      });
+    });
+    
+    return banks;
+  }
+
+  // Detect bank list page on load
+  async function detectBankListOnLoad() {
+    const pathname = window.location.pathname;
+    
+    // Match: /courses/:courseId/question_banks (exactly, not /question_banks/:id)
+    const listMatch = pathname.match(/^\/courses\/(\d+)\/question_banks\/?$/);
+    if (!listMatch) return;
+    
+    const courseId = listMatch[1];
+    
+    // Wait for DOM to be ready (Canvas AJAX)
+    if (document.readyState !== 'complete') {
+      await new Promise(r => window.addEventListener('load', r, { once: true }));
+    }
+    
+    // Wait for bank elements to appear
+    const bankDivs = await waitForBankElements();
+    
+    const banks = scrapeBankListFromDivs(bankDivs, courseId);
+    
+    if (banks.length > 0) {
+      // Sort deterministically by title
+      banks.sort((a, b) => a.title.localeCompare(b.title));
+      
+      console.log("%c[CanvasExporter] Bank list page detected:", "color:#9c27b0;font-weight:bold", banks.length, "banks");
+      window.dispatchEvent(new CustomEvent("CanvasExporter_BankListDetected", { 
+        detail: { courseId, banks } 
+      }));
+    }
+  }
+
+  // Call bank list detection
+  detectBankListOnLoad();
+
+  console.log("[CanvasExporter] Phase 4 page script active (JWT capture + batch export enabled)");
 })();
