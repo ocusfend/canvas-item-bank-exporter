@@ -120,10 +120,7 @@ chrome.runtime.onMessage.addListener((msg) => {
       progressText.textContent = msg.message;
       progressArea.classList.add('success');
       exportBtn.disabled = false;
-      
-      if (msg.skippedItems && msg.skippedItems.length > 0) {
-        showSkippedWarning(msg.skippedItems);
-      }
+      // All items are now exported - no skipped items warning needed
       break;
       
     case 'error':
