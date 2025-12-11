@@ -50,6 +50,7 @@ export const CANVAS_TO_QB_TYPE_MAP = {
   'short_answer_question': 'SA',
   'essay_question': 'ESS',
   'numerical_question': 'NUM',
+  'file_upload_question': 'FU',
   'choice': 'MC',
   'true-false': 'TF',
   'multi-answer': 'MR',
@@ -57,16 +58,24 @@ export const CANVAS_TO_QB_TYPE_MAP = {
   'numeric': 'NUM',
   // Rich fill-in-blank types - treat as short answer
   'rich-fill-blank': 'SA',
-  'fill-blank': 'SA'
+  'fill-blank': 'SA',
+  // File upload support
+  'file-upload': 'FU',
+  // Text block/passage support
+  'text-block': 'PASSAGE'
 };
 
-export const SUPPORTED_TYPES = ['MC', 'MR', 'TF', 'SA', 'ESS', 'NUM'];
+export const SUPPORTED_TYPES = ['MC', 'MR', 'TF', 'SA', 'ESS', 'NUM', 'FU', 'PASSAGE'];
 
 export const SKIP_TYPES = [
+  // Legacy Canvas formats
   'calculated_question', 'fill_in_multiple_blanks_question',
   'matching_question', 'multiple_dropdowns_question',
-  'hot_spot_question', 'file_upload_question', 'text_only_question',
-  'categorization', 'ordering', 'hot-spot'
+  'hot_spot_question', 'text_only_question',
+  // New Quiz API slugs
+  'categorization', 'ordering', 'hot-spot',
+  'formula', 'matching',
+  'stimulus'  // For passage: false Stimulus entries
 ];
 
 export function mapCanvasTypeToQBType(canvasType) {
