@@ -44,25 +44,66 @@ export function normalizeApiBase(apiBase) {
 
 // ========== QUESTION TYPE MAPPING ==========
 export const CANVAS_TO_QB_TYPE_MAP = {
+  // === MULTIPLE CHOICE / SELECTION ===
   'multiple_choice_question': 'MC',
+  'choice': 'MC',
   'true_false_question': 'TF',
+  'true-false': 'TF',
   'multiple_answers_question': 'MR',
+  'multi-answer': 'MR',
+  
+  // === TEXT INPUT ===
   'short_answer_question': 'SA',
   'essay_question': 'ESS',
-  'numerical_question': 'NUM',
-  'file_upload_question': 'FU',
-  'choice': 'MC',
-  'true-false': 'TF',
-  'multi-answer': 'MR',
   'essay': 'ESS',
-  'numeric': 'NUM',
-  // Rich fill-in-blank types - treat as short answer
   'rich-fill-blank': 'SA',
   'fill-blank': 'SA',
-  // File upload support
+  
+  // === NUMERIC ===
+  'numerical_question': 'NUM',
+  'numeric': 'NUM',
+  
+  // === FILE UPLOAD ===
+  'file_upload_question': 'FU',
   'file-upload': 'FU',
-  // Text block/passage support
-  'text-block': 'PASSAGE'
+  
+  // === MATCHING ===
+  'matching_question': 'MAT',
+  'matching': 'MAT',
+  'match': 'MAT',
+  
+  // === CATEGORIZATION ===
+  'categorization_question': 'CAT',
+  'categorization': 'CAT',
+  'categorize': 'CAT',
+  
+  // === ORDERING ===
+  'ordering_question': 'ORD',
+  'ordering': 'ORD',
+  'order': 'ORD',
+  
+  // === HOT SPOT ===
+  'hot_spot_question': 'HS',
+  'hot-spot': 'HS',
+  'hotspot': 'HS',
+  
+  // === FORMULA ===
+  'formula_question': 'FORM',
+  'formula': 'FORM',
+  'calculated_question': 'FORM',
+  
+  // === PASSAGE / TEXT BLOCK ===
+  'text-block': 'PASSAGE',
+  'text_block': 'PASSAGE',
+  'passage': 'PASSAGE',
+  'stimulus': 'STIMULUS',
+  
+  // === EXPLICIT INCLUSION (Hot Spot variants) ===
+  'explicit-constructed-response': 'ECR',
+  'drag-drop': 'DD',
+  'draw': 'DRAW',
+  'highlight': 'HL',
+  'cloze': 'CLOZE'
 };
 
 // All types are now exported - importing app decides what to accept
