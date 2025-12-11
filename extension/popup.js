@@ -134,12 +134,23 @@ const HELP_MODES = {
 };
 
 const modeDot = document.getElementById('mode-dot');
+let currentMode = 'default';
 
 function updateHelpContent(mode) {
   const modeConfig = HELP_MODES[mode] || HELP_MODES['default'];
   helpContent.innerHTML = modeConfig.content;
   helpIcon.title = modeConfig.title;
+  
+  // Only pulse if mode actually changed (not on initial load)
+  if (mode !== currentMode && currentMode !== 'default') {
+    modeDot.classList.remove('pulse');
+    // Trigger reflow to restart animation
+    void modeDot.offsetWidth;
+    modeDot.classList.add('pulse');
+  }
+  
   modeDot.dataset.mode = mode;
+  currentMode = mode;
 }
 
 // Initialize help content
