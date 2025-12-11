@@ -1,4 +1,378 @@
-console.log("[CanvasExporter] Content script booting (Phase 4)…");
+console.log("[CanvasExporter] Content script booting (Phase 5)…");
+
+// ========== CLASSIC QUIZ PARSING (runs in DOM context) ==========
+// These functions are duplicated here because content scripts can't use ES modules
+// and DOMParser is not available in the service worker background script
+
+const CLASSIC_TYPE_MAP = {
+  'multiple_choice_question': 'MC',
+  'true_false_question': 'TF',
+  'multiple_answers_question': 'MR',
+  'short_answer_question': 'SA',
+  'fill_in_multiple_blanks_question': 'FIMB',
+  'multiple_dropdowns_question': 'MDD',
+  'matching_question': 'MAT',
+  'numerical_question': 'NUM',
+  'calculated_question': 'CALC',
+  'essay_question': 'ESS',
+  'file_upload_question': 'FU',
+  'text_only_question': 'TB'
+};
+
+function normalizeType(canvasType, isClassic = false) {
+  if (isClassic) {
+    return CLASSIC_TYPE_MAP[canvasType] || canvasType?.toUpperCase() || 'UNKNOWN';
+  }
+  return canvasType?.toUpperCase() || 'UNKNOWN';
+}
+
+function normalizeBlankId(id) {
+  if (!id) return null;
+  return id.trim().replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
+}
+
+function cleanHtml(html) {
+  if (!html) return '';
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  tmp.querySelectorAll('.drag_handle, .links, script, .screenreader-only, .hidden, [aria-hidden="true"]').forEach(e => e.remove());
+  return tmp.innerHTML.trim();
+}
+
+function htmlToText(html) {
+  if (!html) return null;
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  return tmp.textContent?.trim() || null;
+}
+
+async function hashQuestion(question) {
+  const data = JSON.stringify({
+    type: question.type,
+    body: question.body,
+    answers: question.answers
+  });
+  const encoder = new TextEncoder();
+  const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(data));
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function generateCanvasSignature(doc) {
+  const indicators = {
+    hasCsrfToken: !!doc.querySelector('meta[name="csrf-token"]'),
+    hasNewRceEditor: !!doc.querySelector('[data-rce-wrapper]'),
+    hasInstui: !!doc.querySelector('[class*="__instructure"]'),
+    questionHolderClass: !!doc.querySelector('.question_holder'),
+    answerWrapperClass: !!doc.querySelector('.answers_wrapper')
+  };
+  
+  let domVersion = 'unknown';
+  if (indicators.hasCsrfToken && indicators.questionHolderClass) {
+    domVersion = indicators.hasInstui ? '2022+' : '2020+';
+  }
+  
+  return { domVersion, indicators, extractedAt: new Date().toISOString() };
+}
+
+class ExportWarnings {
+  constructor() { this.warnings = []; }
+  add(questionId, message, severity = 'warn') {
+    this.warnings.push({ questionId, message, severity, timestamp: new Date().toISOString() });
+    console.warn(`[Classic Parse] Q${questionId}: ${message}`);
+  }
+  toArray() { return this.warnings.length > 0 ? this.warnings : null; }
+}
+
+function parseClassicBankHtml(html) {
+  const warnings = new ExportWarnings();
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+  
+  if (doc.querySelector('#login_form') || doc.body?.textContent?.includes('Log In')) {
+    throw new Error('Authentication required - please log into Canvas first');
+  }
+  
+  const canvasSignature = generateCanvasSignature(doc);
+  const titleEl = doc.querySelector('h1') || doc.querySelector('.page-title');
+  const bankTitle = titleEl?.textContent?.trim() || 'Untitled Bank';
+  const groups = extractQuestionGroups(doc);
+  
+  const questionHolders = doc.querySelectorAll(
+    '.question_holder:not([style*="display: none"]):not(#question_template):not(#question_teaser_blank)'
+  );
+  const questions = [];
+  
+  questionHolders.forEach((holder, idx) => {
+    try {
+      const question = extractClassicQuestion(holder, idx, warnings);
+      if (question && question.type !== 'UNKNOWN') questions.push(question);
+    } catch (e) {
+      warnings.add(`idx_${idx}`, `Failed to parse: ${e.message}`, 'error');
+    }
+  });
+  
+  return { bankTitle, questions, groups, canvasSignature, warnings: warnings.toArray() };
+}
+
+function extractQuestionGroups(doc) {
+  const groupDivs = doc.querySelectorAll('.assessment_question_group, .question_group');
+  const groups = [];
+  
+  groupDivs.forEach((groupDiv, idx) => {
+    const titleEl = groupDiv.querySelector('.group_name, .name');
+    const pickCountEl = groupDiv.querySelector('.pick_count');
+    const questionIds = [];
+    
+    groupDiv.querySelectorAll('.question_holder').forEach(holder => {
+      const qDiv = holder.querySelector('.display_question');
+      const idMatch = qDiv?.id?.match(/question_(\d+)/);
+      if (idMatch) questionIds.push(idMatch[1]);
+    });
+    
+    if (questionIds.length > 0) {
+      groups.push({
+        id: `group_${idx}`,
+        title: titleEl?.textContent?.trim() || `Group ${idx + 1}`,
+        pickCount: parseInt(pickCountEl?.textContent?.trim()) || questionIds.length,
+        questionIds
+      });
+    }
+  });
+  
+  return groups.length > 0 ? groups : null;
+}
+
+function extractClassicQuestion(holder, index, warnings) {
+  const questionDiv = holder.querySelector('.display_question.question');
+  if (!questionDiv) return null;
+  if (questionDiv.id === 'question_new' || questionDiv.id === 'question_blank') return null;
+  
+  const typeSpan = questionDiv.querySelector('.question_type');
+  const rawType = typeSpan?.textContent?.trim() || extractTypeFromClass(questionDiv.className);
+  if (!rawType || rawType === 'unknown') {
+    warnings.add(`idx_${index}`, 'Could not determine question type');
+    return null;
+  }
+  
+  const mappedType = normalizeType(rawType, true);
+  const idMatch = questionDiv.id?.match(/question_(\d+)/);
+  const questionId = idMatch ? idMatch[1] : `q_${index}`;
+  const uuid = crypto.randomUUID();
+  
+  const assessmentIdEl = questionDiv.querySelector('.assessment_question_id');
+  const assessmentId = assessmentIdEl?.textContent?.trim() || questionId;
+  
+  const nameEl = questionDiv.querySelector('.question_name');
+  const title = nameEl?.textContent?.trim() || `Question ${index + 1}`;
+  
+  const pointsEl = questionDiv.querySelector('.question_points');
+  const points = rawType === 'text_only_question' ? 0 : (parseFloat(pointsEl?.textContent?.trim()) || 1);
+  
+  const textareaEl = questionDiv.querySelector('.textarea_question_text');
+  const renderedEl = questionDiv.querySelector('.question_text.user_content');
+  const bodyRaw = textareaEl?.value?.trim() || textareaEl?.textContent?.trim() || renderedEl?.innerHTML?.trim() || '';
+  const body = cleanHtml(bodyRaw);
+  const bodyText = htmlToText(bodyRaw);
+  
+  const blanks = extractBlanks(questionDiv, rawType);
+  const answers = extractClassicAnswers(questionDiv, rawType, questionId, warnings);
+  const calculatedData = rawType === 'calculated_question' ? extractCalculatedQuestionData(questionDiv) : null;
+  const feedback = extractFeedback(questionDiv);
+  const migratableToNewQuizzes = determineMigratability(rawType, answers, calculatedData);
+  
+  const question = {
+    id: questionId, uuid, assessmentId, type: mappedType, originalType: rawType,
+    title, points, body, bodyRaw, bodyText, answers, feedback, migratableToNewQuizzes
+  };
+  
+  if (blanks) question.blanks = blanks;
+  if (calculatedData) question.calculatedData = calculatedData;
+  if (rawType === 'text_only_question') question.isInformational = true;
+  
+  return question;
+}
+
+function extractTypeFromClass(className) {
+  const match = className?.match(/(\w+)_question/);
+  return match ? `${match[1]}_question` : 'unknown';
+}
+
+function determineMigratability(type, answers, calculatedData) {
+  if (['calculated_question'].includes(type)) return false;
+  if (type === 'numerical_question' && answers?.some(a => a.numericalType === 'approximate')) return false;
+  return true;
+}
+
+function extractBlanks(questionDiv, questionType) {
+  if (!['fill_in_multiple_blanks_question', 'multiple_dropdowns_question'].includes(questionType)) return null;
+  const blankSelect = questionDiv.querySelector('.blank_id_select');
+  if (!blankSelect) return null;
+  const blanks = [];
+  blankSelect.querySelectorAll('option').forEach(option => {
+    const blankId = normalizeBlankId(option.value);
+    if (blankId) blanks.push(blankId);
+  });
+  return blanks.length > 0 ? blanks : null;
+}
+
+function extractClassicAnswers(questionDiv, questionType, questionId, warnings) {
+  if (questionType === 'matching_question') return extractMatchingPairs(questionDiv, questionId, warnings);
+  
+  const answerDivs = questionDiv.querySelectorAll('.answers_wrapper .answer:not(#answer_template)');
+  const answers = [];
+  
+  answerDivs.forEach((answerDiv, idx) => {
+    if (answerDiv.id === 'answer_template') return;
+    
+    const idEl = answerDiv.querySelector("span.hidden.id, span[class*='id']");
+    const answerId = idEl?.textContent?.trim() || answerDiv.id?.replace('answer_', '') || `a_${idx}`;
+    
+    const blankIdEl = answerDiv.querySelector('.blank_id');
+    const blankIdFromClass = answerDiv.className.match(/answer_for_(\w+)/)?.[1];
+    const rawBlankId = blankIdEl?.textContent?.trim();
+    const effectiveBlankId = (rawBlankId && rawBlankId !== 'none') ? normalizeBlankId(rawBlankId) : (blankIdFromClass ? normalizeBlankId(blankIdFromClass) : null);
+    
+    const isCorrect = answerDiv.classList.contains('correct_answer') || answerDiv.querySelector('.answer_weight')?.textContent?.trim() === '100';
+    const weightEl = answerDiv.querySelector('.answer_weight');
+    const weight = parseInt(weightEl?.textContent?.trim()) || (isCorrect ? 100 : 0);
+    
+    if (questionType === 'numerical_question') {
+      const numericalAnswer = extractNumericalAnswer(answerDiv, answerId, questionId, warnings);
+      if (numericalAnswer) answers.push({ ...numericalAnswer, correct: isCorrect, weight });
+    } else {
+      const textEl = answerDiv.querySelector('.answer_text');
+      const htmlEl = answerDiv.querySelector('.answer_html');
+      const textRaw = htmlEl?.innerHTML?.trim() || textEl?.textContent?.trim() || '';
+      const text = cleanHtml(textRaw);
+      
+      const feedbackEl = answerDiv.querySelector('.answer_comments .comment_html');
+      const answerFeedback = feedbackEl ? cleanHtml(feedbackEl.innerHTML) : null;
+      
+      const answer = { id: answerId, text, textRaw, correct: isCorrect, weight };
+      if (effectiveBlankId) answer.blankId = effectiveBlankId;
+      if (answerFeedback) answer.feedback = answerFeedback;
+      answers.push(answer);
+    }
+  });
+  
+  return answers;
+}
+
+function extractMatchingPairs(questionDiv, questionId, warnings) {
+  const pairs = [];
+  const matchHolders = questionDiv.querySelectorAll('.matching_answer_container, .answer');
+  
+  matchHolders.forEach((holder, idx) => {
+    const leftEl = holder.querySelector('.answer_match_left, .left_side');
+    const rightEl = holder.querySelector('.answer_match_right, .right_side');
+    
+    if (leftEl && rightEl) {
+      pairs.push({
+        id: `match_${idx}`,
+        left: cleanHtml(leftEl.innerHTML?.trim() || leftEl.textContent?.trim() || ''),
+        right: cleanHtml(rightEl.innerHTML?.trim() || rightEl.textContent?.trim() || '')
+      });
+    }
+  });
+  
+  if (pairs.length === 0) warnings.add(questionId, 'No matching pairs found');
+  return pairs;
+}
+
+function extractNumericalAnswer(answerDiv, answerId, questionId, warnings) {
+  const exactEl = answerDiv.querySelector('.numerical_answer_exact, .exact_answer');
+  const marginEl = answerDiv.querySelector('.numerical_answer_margin, .error_margin');
+  const startEl = answerDiv.querySelector('.numerical_answer_start, .start_range');
+  const endEl = answerDiv.querySelector('.numerical_answer_end, .end_range');
+  const approxEl = answerDiv.querySelector('.numerical_answer_approximate, .approximate_answer');
+  const precisionEl = answerDiv.querySelector('.numerical_answer_precision, .precision');
+  
+  let numericalType = 'unknown';
+  let value = null, margin = null, start = null, end = null, precision = null;
+  
+  if (exactEl?.textContent?.trim()) {
+    numericalType = 'exact';
+    value = parseFloat(exactEl.textContent.trim());
+    if (marginEl?.textContent?.trim()) margin = parseFloat(marginEl.textContent.trim());
+  } else if (startEl?.textContent?.trim() && endEl?.textContent?.trim()) {
+    numericalType = 'range';
+    start = parseFloat(startEl.textContent.trim());
+    end = parseFloat(endEl.textContent.trim());
+  } else if (approxEl?.textContent?.trim()) {
+    numericalType = 'approximate';
+    value = parseFloat(approxEl.textContent.trim());
+    if (precisionEl?.textContent?.trim()) precision = parseInt(precisionEl.textContent.trim());
+  }
+  
+  if (numericalType === 'unknown') {
+    warnings.add(questionId, `Could not determine numerical answer type for answer ${answerId}`);
+    return null;
+  }
+  
+  return { id: answerId, numericalType, value, margin, start, end, precision };
+}
+
+function extractCalculatedQuestionData(questionDiv) {
+  const variables = [];
+  const variableDivs = questionDiv.querySelectorAll('.variable_definition, .variable');
+  
+  variableDivs.forEach(varDiv => {
+    const nameEl = varDiv.querySelector('.variable_name, .name');
+    const minEl = varDiv.querySelector('.variable_min, .min');
+    const maxEl = varDiv.querySelector('.variable_max, .max');
+    const scaleEl = varDiv.querySelector('.variable_scale, .decimal_places');
+    
+    if (nameEl?.textContent?.trim()) {
+      variables.push({
+        name: nameEl.textContent.trim(),
+        min: parseFloat(minEl?.textContent?.trim()) || 0,
+        max: parseFloat(maxEl?.textContent?.trim()) || 100,
+        scale: parseInt(scaleEl?.textContent?.trim()) || 0
+      });
+    }
+  });
+  
+  const formulaEl = questionDiv.querySelector('.formula_definition, .formula');
+  const formula = formulaEl?.textContent?.trim() || null;
+  
+  const toleranceEl = questionDiv.querySelector('.answer_tolerance, .tolerance');
+  const tolerance = parseFloat(toleranceEl?.textContent?.trim()) || 0;
+  
+  const solutions = [];
+  const solutionDivs = questionDiv.querySelectorAll('.combination, .generated_solution');
+  
+  solutionDivs.forEach((solDiv, idx) => {
+    const inputs = {};
+    solDiv.querySelectorAll('.variable_value, .var_value').forEach(varVal => {
+      const name = varVal.getAttribute('data-variable') || varVal.className.match(/var_(\w+)/)?.[1];
+      if (name) inputs[name] = parseFloat(varVal.textContent.trim());
+    });
+    
+    const outputEl = solDiv.querySelector('.answer, .result');
+    const output = outputEl ? parseFloat(outputEl.textContent.trim()) : null;
+    
+    if (Object.keys(inputs).length > 0 || output !== null) {
+      solutions.push({ id: `sol_${idx}`, inputs, output });
+    }
+  });
+  
+  return { variables, formula, tolerance, solutions };
+}
+
+function extractFeedback(questionDiv) {
+  const correctEl = questionDiv.querySelector('.correct_comments .comment_html, .correct_feedback');
+  const incorrectEl = questionDiv.querySelector('.incorrect_comments .comment_html, .incorrect_feedback');
+  const neutralEl = questionDiv.querySelector('.neutral_comments .comment_html, .general_feedback');
+  
+  return {
+    correct: correctEl ? cleanHtml(correctEl.innerHTML) : null,
+    incorrect: incorrectEl ? cleanHtml(incorrectEl.innerHTML) : null,
+    neutral: neutralEl ? cleanHtml(neutralEl.innerHTML) : null
+  };
+}
+
+// ========== END CLASSIC QUIZ PARSING ==========
 
 // Inject page script so we can patch fetch/XHR in page JS environment
 const s = document.createElement("script");
@@ -91,6 +465,29 @@ window.addEventListener("CanvasExporter_FetchResponse", (e) => {
 let hasRespondedToRequest = new Set();
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // Handle Classic HTML parsing (runs in DOM context where DOMParser is available)
+  if (msg.type === "PARSE_CLASSIC_HTML") {
+    try {
+      console.log("[CanvasExporter] Parsing Classic HTML in content script context...");
+      const result = parseClassicBankHtml(msg.html);
+      
+      // Hash questions asynchronously
+      (async () => {
+        const questionsWithHashes = [];
+        for (const q of result.questions) {
+          const hash = await hashQuestion(q);
+          questionsWithHashes.push({ ...q, hash });
+        }
+        result.questions = questionsWithHashes;
+        sendResponse({ success: true, data: result });
+      })();
+    } catch (error) {
+      console.error("[CanvasExporter] Parse error:", error);
+      sendResponse({ success: false, error: error.message });
+    }
+    return true; // Keep channel open for async response
+  }
+  
   // Handle HTML page fetch requests (for Classic Quiz banks)
   if (msg.type === "FETCH_HTML") {
     fetch(msg.url, { credentials: 'include' })

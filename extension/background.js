@@ -2,10 +2,7 @@ import {
   mapCanvasTypeToQBType,
   sanitizeFilename, debugLog,
   normalizeApiBase, API_BASE_CANDIDATES,
-  CLASSIC_TYPE_MAP,
-  parseClassicBankHtml,
-  hashQuestion,
-  ExportWarnings
+  CLASSIC_TYPE_MAP
 } from './utils.js';
 
 // ========== STATE ==========
@@ -1066,7 +1063,9 @@ async function exportClassicBank(bankId, courseId, tabId) {
     const html = await fetchClassicBankHtml(tabId, courseId, bankId);
     
     sendProgress(tabId, 2, "Parsing questions...");
-    const { bankTitle, questions, groups, canvasSignature, warnings } = parseClassicBankHtml(html);
+    // Parse HTML via content script (where DOMParser is available)
+    const parseResult = await parseHtmlViaContentScript(tabId, html);
+    const { bankTitle, questions, groups, canvasSignature, warnings } = parseResult;
     console.log("Parsed:", { bankTitle, questionCount: questions.length, groups, canvasSignature });
     
     if (questions.length === 0) {
@@ -1075,18 +1074,10 @@ async function exportClassicBank(bankId, courseId, tabId) {
     
     sendProgress(tabId, 3, `Processing ${questions.length} questions...`);
     
-    // Async chunking for large banks
-    const questionsWithHashes = [];
-    for (let idx = 0; idx < questions.length; idx++) {
-      const q = questions[idx];
-      sendItemProgress(idx + 1, questions.length, q.title || `Question ${idx + 1}`);
-      const hash = await hashQuestion(q);
-      questionsWithHashes.push({ ...q, hash });
-      
-      // Yield every 50 questions to prevent UI freeze
-      if (idx % 50 === 0 && idx > 0) {
-        await new Promise(r => setTimeout(r, 0));
-      }
+    // Questions already have hashes from content script
+    const questionsWithHashes = questions;
+    for (let idx = 0; idx < questionsWithHashes.length; idx++) {
+      sendItemProgress(idx + 1, questionsWithHashes.length, questionsWithHashes[idx].title || `Question ${idx + 1}`);
     }
     
     sendProgress(tabId, 4, "Finalizing JSON...");
@@ -1119,6 +1110,32 @@ async function exportClassicBank(bankId, courseId, tabId) {
   
   console.timeEnd("export-classic");
   console.groupEnd();
+}
+
+// Parse HTML via content script (runs in DOM context)
+async function parseHtmlViaContentScript(tabId, html) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error('HTML parsing timed out after 60s'));
+    }, 60000);
+    
+    chrome.tabs.sendMessage(tabId, {
+      type: "PARSE_CLASSIC_HTML",
+      html
+    }, (response) => {
+      clearTimeout(timeout);
+      
+      if (chrome.runtime.lastError) {
+        reject(new Error(`Content script error: ${chrome.runtime.lastError.message}`));
+        return;
+      }
+      if (response?.success) {
+        resolve(response.data);
+      } else {
+        reject(new Error(response?.error || "Failed to parse HTML"));
+      }
+    });
+  });
 }
 
 async function fetchClassicBankHtml(tabId, courseId, bankId) {
