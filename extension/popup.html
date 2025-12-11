@@ -5,21 +5,21 @@
   <style>
     /* ========== CSS CUSTOM PROPERTIES (LIGHT THEME) ========== */
     :root {
-      /* Base backgrounds */
+      /* Base backgrounds - Cooler grays for premium feel */
       --bg-primary: #ffffff;
-      --bg-secondary: #f5f5f5;
-      --bg-tertiary: #fafafa;
-      --bg-hover: #f0f0f0;
+      --bg-secondary: #f8f9fa;
+      --bg-tertiary: #f1f3f4;
+      --bg-hover: #e8f0fe;
       
       /* Text colors */
       --text-primary: #333333;
       --text-secondary: #666666;
       --text-muted: #888888;
       
-      /* Border colors */
-      --border-primary: #e0e0e0;
-      --border-secondary: #f0f0f0;
-      --border-light: #eeeeee;
+      /* Border colors - Blue tinted for cohesion */
+      --border-primary: #dadce0;
+      --border-secondary: #e8eaed;
+      --border-light: #f1f3f4;
       
       /* Accent colors */
       --accent-primary: #1976d2;
@@ -49,10 +49,11 @@
       --badge-new-bg: #fff3e0;
       --badge-new-text: #e65100;
       
-      /* Shadows - Adaptive */
-      --shadow-popup: rgba(0, 0, 0, 0.15);
-      --shadow-floating: rgba(0, 0, 0, 0.20);
-      --shadow-glow: rgba(25, 118, 210, 0.3);
+      /* Shadows - Premium light mode with blue tint */
+      --shadow-popup: rgba(25, 118, 210, 0.08);
+      --shadow-floating: rgba(25, 118, 210, 0.12);
+      --shadow-subtle: rgba(0, 0, 0, 0.05);
+      --shadow-glow: rgba(25, 118, 210, 0.35);
       
       /* Scrollbar */
       --scrollbar-track: #f0f0f0;
@@ -109,6 +110,7 @@
       /* Shadows - Deeper for dark mode */
       --shadow-popup: rgba(0, 0, 0, 0.55);
       --shadow-floating: rgba(0, 0, 0, 0.65);
+      --shadow-subtle: rgba(0, 0, 0, 0.25);
       --shadow-glow: rgba(100, 181, 246, 0.3);
       
       /* Scrollbar - Softer */
@@ -223,7 +225,7 @@
       background: var(--accent-primary);
       color: white;
       transform: scale(1.05);
-      box-shadow: 0 0 6px var(--shadow-glow);
+      box-shadow: 0 0 8px var(--shadow-glow), inset 0 1px 2px rgba(255, 255, 255, 0.2);
     }
 
     /* Custom themed tooltips */
@@ -331,10 +333,17 @@
       border-radius: 8px;
       cursor: pointer;
       display: none;
-      transition: background 0.2s, opacity 0.2s, transform 0.15s;
+      transition: background 0.2s, opacity 0.2s, transform 0.15s, box-shadow 0.15s;
     }
     #exportBtn:hover:not(:disabled) { 
-      background: var(--accent-primary-hover); 
+      background: var(--accent-primary-hover);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 8px var(--shadow-popup);
+    }
+    #exportBtn:focus-visible {
+      outline: 2px solid var(--accent-primary);
+      outline-offset: 2px;
+      box-shadow: 0 4px 12px var(--shadow-popup);
     }
     #exportBtn:disabled { 
       background: var(--btn-disabled-bg); 
@@ -400,9 +409,11 @@
     .bank-item:hover {
       background: var(--bg-hover);
       transform: translateX(2px);
+      box-shadow: 0 2px 4px var(--shadow-subtle);
     }
     .bank-item.selected {
       background: var(--accent-primary-light);
+      border-left: 3px solid var(--accent-primary);
     }
     .bank-item label {
       display: flex;
@@ -473,10 +484,17 @@
       border-radius: 8px;
       cursor: pointer;
       margin-top: 8px;
-      transition: background 0.2s ease, transform 0.15s ease;
+      transition: background 0.2s ease, transform 0.15s ease, box-shadow 0.15s ease;
     }
     #exportBatchBtn:hover:not(:disabled) { 
-      background: var(--accent-primary-hover); 
+      background: var(--accent-primary-hover);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 8px var(--shadow-popup);
+    }
+    #exportBatchBtn:focus-visible {
+      outline: 2px solid var(--accent-primary);
+      outline-offset: 2px;
+      box-shadow: 0 4px 12px var(--shadow-popup);
     }
     #exportBatchBtn:disabled { 
       background: var(--btn-disabled-bg); 
