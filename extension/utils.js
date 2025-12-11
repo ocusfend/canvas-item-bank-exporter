@@ -65,26 +65,20 @@ export const CANVAS_TO_QB_TYPE_MAP = {
   'text-block': 'PASSAGE'
 };
 
+// All types are now exported - importing app decides what to accept
 export const SUPPORTED_TYPES = ['MC', 'MR', 'TF', 'SA', 'ESS', 'NUM', 'FU', 'PASSAGE'];
 
-export const SKIP_TYPES = [
-  // Legacy Canvas formats
-  'calculated_question', 'fill_in_multiple_blanks_question',
-  'matching_question', 'multiple_dropdowns_question',
-  'hot_spot_question', 'text_only_question',
-  // New Quiz API slugs
-  'categorization', 'ordering', 'hot-spot',
-  'formula', 'matching',
-  'stimulus'  // For passage: false Stimulus entries
-];
+// Deprecated - kept for reference only, no longer used for filtering
+export const SKIP_TYPES = [];
 
 export function mapCanvasTypeToQBType(canvasType) {
-  return CANVAS_TO_QB_TYPE_MAP[canvasType] || null;
+  // Return mapped type if known, otherwise return original type in uppercase
+  return CANVAS_TO_QB_TYPE_MAP[canvasType] || canvasType?.toUpperCase() || 'UNKNOWN';
 }
 
+// All question types are now supported - no filtering
 export function isSupported(canvasType) {
-  const qbType = mapCanvasTypeToQBType(canvasType);
-  return qbType && SUPPORTED_TYPES.includes(qbType);
+  return true;
 }
 
 // ========== SANITIZATION ==========

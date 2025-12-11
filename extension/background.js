@@ -1,7 +1,7 @@
 import { 
-  isSupported, mapCanvasTypeToQBType,
+  mapCanvasTypeToQBType,
   sanitizeFilename, debugLog,
-  normalizeApiBase, API_BASE_CANDIDATES, summarizeSkippedItems
+  normalizeApiBase, API_BASE_CANDIDATES
 } from './utils.js';
 
 // ========== STATE ==========
@@ -354,16 +354,14 @@ async function exportBank(bankId, tabId) {
     sendProgress(tabId, 3, `Processing ${entries.length} items...`);
     const itemDefinitions = await fetchItemDefinitions(apiBase, bankId, entries);
     
-    // Categorize items
-    const { supported, unsupported } = categorizeItems(itemDefinitions);
+    // All items are now exported - no filtering
+    const allItems = categorizeItems(itemDefinitions);
     
-    if (unsupported.length > 0) {
-      debugLog("SKIP", `Skipping ${unsupported.length} items: ${summarizeSkippedItems(unsupported)}`);
-    }
+    debugLog("FETCH", `Exporting all ${allItems.length} items`);
     
     // Step 5: Generate JSON and download
     sendProgress(tabId, 4, "Creating JSON file...");
-    const jsonData = generateJSONExport(bank, supported, unsupported);
+    const jsonData = generateJSONExport(bank, allItems);
     
     const filename = sanitizeFilename(bank.title || bank.name || `bank_${bankId}`) + "_export.json";
     const jsonString = JSON.stringify(jsonData, null, 2);
@@ -379,8 +377,7 @@ async function exportBank(bankId, tabId) {
     
     sendComplete(
       tabId, 
-      `Export complete! ${supported.length} questions exported.`,
-      unsupported.map(i => ({ id: i.id, type: i.question_type || i.interaction_type }))
+      `Export complete! ${allItems.length} questions exported.`
     );
     
   } catch (error) {
@@ -399,9 +396,9 @@ async function exportBank(bankId, tabId) {
 }
 
 // ========== JSON EXPORT GENERATION ==========
-function generateJSONExport(bank, supported, unsupported) {
+function generateJSONExport(bank, items) {
   return {
-    exportVersion: "2.0",
+    exportVersion: "2.1",
     exportedAt: new Date().toISOString(),
     bank: {
       id: bank.id,
@@ -419,17 +416,12 @@ function generateJSONExport(bank, supported, unsupported) {
       metadata: bank.metadata || null
     },
     summary: {
-      totalItems: supported.length + unsupported.length,
-      exportedItems: supported.length,
-      skippedItems: unsupported.length
+      totalItems: items.length,
+      exportedItems: items.length,
+      skippedItems: 0
     },
-    items: supported.map(item => transformItemToJSON(item)),
-    skipped: unsupported.map(item => ({
-      id: item.id,
-      title: item.title || item.question_name || 'Untitled',
-      type: item.question_type || item.interaction_type || 'unknown',
-      reason: 'Unsupported question type'
-    }))
+    items: items.map(item => transformItemToJSON(item)),
+    skipped: []  // Kept for backwards compatibility, always empty now
   };
 }
 
@@ -917,22 +909,17 @@ async function fetchItemDefinitions(apiBase, bankId, entries) {
   return items;
 }
 
+// All items are now exported - no filtering by question type
 function categorizeItems(items) {
-  const supported = [];
-  const unsupported = [];
+  const allItems = [];
   
   for (const item of items) {
     const questionType = item.question_type || 
                          item.interaction_type?.slug || 
                          item.interaction_type;
     
-    if (isSupported(questionType)) {
-      supported.push({ ...item, question_type: questionType });
-    } else {
-      unsupported.push({ ...item, question_type: questionType });
-      debugLog("SKIP", `Unsupported: ${questionType} (ID: ${item.id})`);
-    }
+    allItems.push({ ...item, question_type: questionType });
   }
   
-  return { supported, unsupported };
+  return allItems;
 }
