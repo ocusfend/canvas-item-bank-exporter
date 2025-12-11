@@ -401,11 +401,22 @@ async function exportBank(bankId, tabId) {
 // ========== JSON EXPORT GENERATION ==========
 function generateJSONExport(bank, supported, unsupported) {
   return {
-    exportVersion: "1.0",
+    exportVersion: "2.0",
     exportedAt: new Date().toISOString(),
     bank: {
       id: bank.id,
       title: bank.title || bank.name || `Bank ${bank.id}`,
+      description: bank.description || null,
+      status: bank.status || null,
+      archived: bank.archived ?? false,
+      createdAt: bank.created_at || null,
+      updatedAt: bank.updated_at || null,
+      contextId: bank.context_id || null,
+      contextType: bank.context_type || null,
+      contextUuid: bank.context_uuid || null,
+      workflowState: bank.workflow_state || null,
+      alignmentData: bank.alignment_data || null,
+      metadata: bank.metadata || null
     },
     summary: {
       totalItems: supported.length + unsupported.length,
@@ -666,16 +677,82 @@ function transformItemToJSON(item) {
     answers.map(a => ({ id: a.id, correct: a.correct, textPreview: a.text?.substring(0, 30) })));
 
   return {
+    // === IDENTITY ===
     id: item.id,
+    bankId: item.bank_id || null,
+    bankEntryId: item.bank_entry_id || null,
+    
+    // === TYPE INFO ===
     type: qbType,
     originalType: canvasType,
     entryType: item.entry_type || 'Item',
+    interactionType: item.interaction_type ? {
+      id: item.interaction_type.id || null,
+      slug: item.interaction_type.slug || canvasType,
+      name: item.interaction_type.name || null,
+      propertiesSchema: item.interaction_type.properties_schema || null,
+      scoringAlgorithmOptions: item.interaction_type.scoring_algorithm_options || [],
+      scoringAlgorithmDefault: item.interaction_type.scoring_algorithm_default || null,
+      userResponseTypeOptions: item.interaction_type.user_response_type_options || []
+    } : null,
+    
+    // === STATUS & META ===
+    status: item.status || null,
+    archived: item.archived ?? false,
+    label: item.label || null,
+    
+    // === TIMESTAMPS ===
+    createdAt: item.created_at || null,
+    updatedAt: item.updated_at || null,
+    
+    // === CONTENT ===
     title: item.title || item.question_name || 'Untitled',
     body,
     points,
+    
+    // === RELATIONSHIPS ===
+    stimulusId: item.stimulus_id || null,
+    outcomeAlignment: item.outcome_alignment_set_guid || null,
+    
+    // === METADATA & TAGS ===
+    metadata: {
+      tags: item.metadata?.tags || [],
+      tagAssociations: item.tag_associations || []
+    },
+    
+    // === ANSWERS ===
     answers,
-    allowedFiles: item.interaction_data?.allowed_files || null,
-    // Essay settings
+    
+    // === SCORING CONFIGURATION ===
+    scoring: {
+      algorithm: item.scoring_algorithm || null,
+      userResponseType: item.user_response_type || null,
+      calculatorType: item.calculator_type || 'none',
+      marginOfError: item.scoring_data?.margin_of_error ?? null,
+      marginType: item.scoring_data?.margin_type ?? null
+    },
+    
+    // === PROPERTIES ===
+    properties: {
+      varyPointsByAnswer: item.properties?.vary_points_by_answer ?? false,
+      shuffleRules: item.properties?.shuffle_rules || null,
+      spellCheck: item.properties?.spell_check ?? null,
+      showWordCount: item.properties?.show_word_count ?? null,
+      wordLimit: item.properties?.word_limit ?? null,
+      wordLimitMin: item.properties?.word_limit_min ?? null,
+      wordLimitMax: item.properties?.word_limit_max ?? null,
+      ...item.properties
+    },
+    
+    // === FEEDBACK ===
+    feedback: {
+      correct: item.correct_comments || item.feedback?.correct || '',
+      incorrect: item.incorrect_comments || item.feedback?.incorrect || '',
+      neutral: item.neutral_comments || item.feedback?.neutral || ''
+    },
+    answerFeedback: item.answer_feedback || {},
+    
+    // === TYPE-SPECIFIC SETTINGS ===
     essaySettings: qbType === 'ESS' ? {
       spellCheck: item.properties?.spell_check ?? false,
       showWordCount: item.properties?.show_word_count ?? false,
@@ -683,31 +760,25 @@ function transformItemToJSON(item) {
       wordLimitMin: item.properties?.word_limit_min ?? null,
       wordLimitMax: item.properties?.word_limit_max ?? null
     } : null,
-    // Numeric settings (margin of error and detailed answer config)
     numericSettings: qbType === 'NUM' ? {
       answers: Array.isArray(item.scoring_data?.value) 
         ? item.scoring_data.value.map(a => ({
             id: a.id,
-            type: a.type,  // 'exactResponse' or 'marginOfError'
+            type: a.type,
             value: a.value,
             margin: a.margin ?? null,
             marginType: a.margin_type ?? null
           }))
-        : null,
-      marginOfError: item.scoring_data?.margin_of_error ?? null,
-      marginType: item.scoring_data?.margin_type ?? null
+        : null
     } : null,
-    // Matching settings
     matchingSettings: qbType === 'MAT' ? {
       questions: (item.interaction_data?.questions || []).map(q => ({
         id: q.id,
         text: stripHtml(q.item_body || q.body || ''),
         answerText: stripHtml(q.answer_body || q.answer?.body || '')
       })),
-      shuffleQuestions: item.properties?.shuffle_rules?.questions?.shuffled ?? false,
-      scoringAlgorithm: item.scoring_algorithm || 'PartialDeep'
+      shuffleQuestions: item.properties?.shuffle_rules?.questions?.shuffled ?? false
     } : null,
-    // Categorization settings
     categorizationSettings: qbType === 'CAT' ? {
       categories: (item.interaction_data?.categories || []).map(c => ({
         id: c.id,
@@ -717,24 +788,21 @@ function transformItemToJSON(item) {
         id: c.id,
         text: stripHtml(c.item_body || c.body || '')
       })),
-      scoringAlgorithm: item.scoring_algorithm || 'Categorization',
-      scoreMethod: item.scoring_data?.score_method || 'all_or_nothing'
+      scoreMethod: item.scoring_data?.score_method || null
     } : null,
-    // Ordering settings
     orderingSettings: qbType === 'ORD' ? {
       topLabel: item.interaction_data?.top_label || null,
       bottomLabel: item.interaction_data?.bottom_label || null,
       choices: (item.interaction_data?.choices || []).map(c => ({
         id: c.id,
-        text: stripHtml(c.item_body || c.body || '')
+        text: stripHtml(c.item_body || c.body || ''),
+        position: c.position ?? null
       }))
     } : null,
-    // Hot Spot settings
     hotSpotSettings: qbType === 'HS' ? {
       imageUrl: item.interaction_data?.image_url || null,
       hotspotsCount: item.interaction_data?.hotspots_count || 0
     } : null,
-    // Formula settings
     formulaSettings: qbType === 'FORM' ? {
       variables: (item.scoring_data?.variables || []).map(v => ({
         name: v.name,
@@ -742,16 +810,14 @@ function transformItemToJSON(item) {
         max: v.max,
         precision: v.precision ?? 0
       })),
-      marginOfError: item.scoring_data?.margin_of_error ?? 0,
-      marginType: item.scoring_data?.margin_type || 'absolute',
       answerCount: item.scoring_data?.answer_count ?? 1,
       formula: item.scoring_data?.formula || null
     } : null,
-    feedback: {
-      correct: item.correct_comments || item.feedback?.correct || '',
-      incorrect: item.incorrect_comments || item.feedback?.incorrect || '',
-      neutral: item.neutral_comments || item.feedback?.neutral || ''
-    }
+    
+    // === RAW DATA PRESERVATION ===
+    allowedFiles: item.interaction_data?.allowed_files || null,
+    rawInteractionData: item.interaction_data || null,
+    rawScoringData: item.scoring_data || null
   };
 }
 
