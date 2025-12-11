@@ -54,7 +54,10 @@ export const CANVAS_TO_QB_TYPE_MAP = {
   'true-false': 'TF',
   'multi-answer': 'MR',
   'essay': 'ESS',
-  'numeric': 'NUM'
+  'numeric': 'NUM',
+  // Rich fill-in-blank types - treat as short answer
+  'rich-fill-blank': 'SA',
+  'fill-blank': 'SA'
 };
 
 export const SUPPORTED_TYPES = ['MC', 'MR', 'TF', 'SA', 'ESS', 'NUM'];
@@ -63,7 +66,7 @@ export const SKIP_TYPES = [
   'calculated_question', 'fill_in_multiple_blanks_question',
   'matching_question', 'multiple_dropdowns_question',
   'hot_spot_question', 'file_upload_question', 'text_only_question',
-  'categorization', 'ordering', 'hot-spot', 'fill-blank'
+  'categorization', 'ordering', 'hot-spot'
 ];
 
 export function mapCanvasTypeToQBType(canvasType) {

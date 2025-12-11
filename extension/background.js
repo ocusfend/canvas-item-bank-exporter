@@ -422,22 +422,71 @@ function generateJSONExport(bank, supported, unsupported) {
   };
 }
 
+// Helper to strip HTML tags from text
+function stripHtml(html) {
+  return (html || '').replace(/<[^>]*>/g, '').trim();
+}
+
 function transformItemToJSON(item) {
   const qbType = mapCanvasTypeToQBType(item.question_type || item.interaction_type);
-  const answers = item.answers || item.choices || [];
+  const interactionData = item.interaction_data || {};
+  const scoringData = item.scoring_data || {};
+  
+  let answers = [];
+  
+  // Extract answers based on question type
+  if (qbType === 'TF') {
+    // True/False: Build from true_choice/false_choice
+    const correctValue = scoringData.value; // boolean
+    answers = [
+      { id: 'true', text: stripHtml(interactionData.true_choice) || 'True', correct: correctValue === true },
+      { id: 'false', text: stripHtml(interactionData.false_choice) || 'False', correct: correctValue === false }
+    ];
+  } else if (qbType === 'MC' || qbType === 'MR') {
+    // Multiple Choice/Answer: Extract from interaction_data.choices
+    const choices = interactionData.choices || [];
+    const correctIds = Array.isArray(scoringData.value) ? scoringData.value : [];
+    answers = choices.map(choice => ({
+      id: choice.id,
+      text: stripHtml(choice.item_body || choice.body || ''),
+      correct: correctIds.includes(choice.id)
+    }));
+  } else if (qbType === 'SA') {
+    // Short Answer / Fill-in-blank: Extract correct answers from scoring_data
+    const blanks = scoringData.value || [];
+    if (Array.isArray(blanks)) {
+      answers = blanks.map((blank, idx) => ({
+        id: blank.id || `blank_${idx}`,
+        text: blank.scoring_data?.value?.[0] || blank.scoring_data?.blank_text || '',
+        correct: true
+      }));
+    }
+  }
+  
+  // Fallback: try legacy answer formats if no answers extracted
+  if (answers.length === 0) {
+    const legacyAnswers = item.answers || item.choices || [];
+    answers = legacyAnswers.map((answer, idx) => ({
+      id: answer.id || `answer_${idx}`,
+      text: stripHtml(answer.text || answer.html || answer.item_body || answer.body || ''),
+      correct: answer.weight > 0 || answer.correct === true
+    }));
+  }
+  
+  // Extract points - handle scoring_data properly (avoid arrays/objects)
+  let points = item.points_possible || 1;
+  if (typeof scoringData.value === 'number') {
+    points = scoringData.value;
+  }
   
   return {
     id: item.id,
     type: qbType,
     originalType: item.question_type || item.interaction_type,
     title: item.title || item.question_name || 'Untitled',
-    body: item.question_text || item.stimulus || item.item_body || item.body || '',
-    points: item.points_possible || item.scoring_data?.value || 1,
-    answers: answers.map((answer, idx) => ({
-      id: answer.id || `answer_${idx}`,
-      text: answer.text || answer.html || answer.body || '',
-      correct: answer.weight > 0 || answer.correct === true
-    })),
+    body: stripHtml(item.question_text || item.stimulus || item.item_body || item.body || ''),
+    points: points,
+    answers: answers,
     feedback: {
       correct: item.correct_comments || item.feedback?.correct || '',
       incorrect: item.incorrect_comments || item.feedback?.incorrect || '',
