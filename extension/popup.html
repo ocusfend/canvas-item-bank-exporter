@@ -285,6 +285,16 @@
     #help-popup p { margin: 0 0 8px; }
     #help-popup p:last-child { margin-bottom: 0; }
     #help-popup strong { color: var(--text-primary); }
+    #help-popup kbd {
+      display: inline-block;
+      padding: 2px 5px;
+      font-size: 10px;
+      font-family: monospace;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-primary);
+      border-radius: 3px;
+      box-shadow: 0 1px 0 var(--shadow-subtle);
+    }
     
     .status { 
       padding: 12px; 
@@ -801,9 +811,7 @@
     <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
   </span>
   <div id="help-popup" class="hidden">
-    <p><strong>Classic Quiz Question Banks</strong> are the original Canvas quiz storage system.</p>
-    <p><strong>Batch export</strong> saves each selected bank as a separate JSON file.</p>
-    <p>This extension does not support New Quizzes Item Banks from this page.</p>
+    <div id="help-content"></div>
   </div>
   
   <div id="auth-status" class="pending">
