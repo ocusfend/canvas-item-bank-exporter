@@ -213,8 +213,22 @@ function refresh() {
 
 // ========== SINGLE BANK EXPORT UI ==========
 
+const ICONS = {
+  bookClassic: '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>',
+  bookNew: '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>',
+  books: '<svg class="icon icon-lg" viewBox="0 0 24 24"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/><path d="M8 7h6"/><path d="M8 11h8"/></svg>',
+  fileDown: '<svg class="icon" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M12 18v-6"/><path d="m9 15 3 3 3-3"/></svg>',
+  search: '<svg class="icon icon-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>',
+  fileText: '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>',
+  clock: '<svg class="icon icon-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+  checkCircle: '<svg class="icon" viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>',
+  xCircle: '<svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>',
+  chevronDown: '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>',
+  chevronRight: '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>'
+};
+
 function showBankDetected(bank) {
-  const typeIcon = bank.type === 'classic' ? '📘' : '📙';
+  const typeIcon = bank.type === 'classic' ? ICONS.bookClassic : ICONS.bookNew;
   const typeLabel = bank.type === 'classic' ? 'Classic Quiz' : 'New Quizzes';
   const typeBadgeClass = bank.type === 'classic' ? 'classic' : 'new-quiz';
   const typeTooltip = bank.type === 'classic' 
@@ -239,7 +253,7 @@ function showNoBank() {
   statusEl.classList.remove('detected');
   exportBtn.style.display = 'block';
   exportBtn.disabled = true;
-  exportBtn.textContent = '📄 Export JSON';
+  exportBtn.innerHTML = `${ICONS.fileDown} Export JSON`;
   
   currentBankId = null;
   currentBankType = null;
@@ -252,7 +266,7 @@ function showBankList(bankListData) {
   currentBankList = bankListData;
   const { courseId, banks } = bankListData;
   
-  statusEl.innerHTML = `📚 Course ${courseId}: <strong>${banks.length} Question Banks</strong>`;
+  statusEl.innerHTML = `${ICONS.books} Course ${courseId}: <strong>${banks.length} Question Banks</strong>`;
   statusEl.classList.add('detected');
   
   // Hide single export button, show batch UI
@@ -270,7 +284,7 @@ function showBankList(bankListData) {
         <span class="bank-title">${escapeHtml(bank.title)}</span>
         <span class="bank-count">${bank.questionCount} Q</span>
       </label>
-      <span class="bank-preview" title="Open bank in Canvas" data-bank-id="${bank.id}">🔍</span>
+      <span class="bank-preview" title="Open bank in Canvas" data-bank-id="${bank.id}">${ICONS.search}</span>
     </div>
   `).join('');
   
@@ -306,7 +320,7 @@ function updateExportBatchButton() {
   const selected = getSelectedBanks();
   const count = selected.length;
   
-  exportBatchBtn.textContent = `📄 Export Selected (${count})`;
+  exportBatchBtn.innerHTML = `${ICONS.fileDown} Export Selected (${count})`;
   
   // Update selection summary with total questions
   if (count > 0) {
@@ -434,7 +448,7 @@ openFolderBtn.addEventListener('click', () => {
 
 warningsHeader.addEventListener('click', () => {
   warningsList.classList.toggle('collapsed');
-  warningsToggle.textContent = warningsList.classList.contains('collapsed') ? '▶' : '▼';
+  warningsToggle.innerHTML = warningsList.classList.contains('collapsed') ? ICONS.chevronRight : ICONS.chevronDown;
 });
 
 // Keyboard shortcuts
@@ -488,16 +502,16 @@ chrome.runtime.onMessage.addListener((msg) => {
       const percent = Math.round((msg.current / msg.total) * 100);
       progressBar.style.width = `${percent}%`;
       progressText.textContent = `Processing ${msg.current}/${msg.total} items...`;
-      progressItem.textContent = msg.itemTitle ? `📝 ${msg.itemTitle}` : `Item ${msg.current}`;
+      progressItem.innerHTML = msg.itemTitle ? `${ICONS.fileText} ${msg.itemTitle}` : `Item ${msg.current}`;
       
       if (msg.current > 1) {
         const elapsed = Date.now() - itemStartTime;
         const avgTimePerItem = elapsed / msg.current;
         const remaining = msg.total - msg.current;
         const estimatedMs = avgTimePerItem * remaining;
-        progressTime.textContent = `⏱️ ${formatTimeRemaining(estimatedMs)} remaining`;
+        progressTime.innerHTML = `${ICONS.clock} ${formatTimeRemaining(estimatedMs)} remaining`;
       } else {
-        progressTime.textContent = '⏱️ Calculating...';
+        progressTime.innerHTML = `${ICONS.clock} Calculating...`;
       }
       break;
     
@@ -518,7 +532,7 @@ chrome.runtime.onMessage.addListener((msg) => {
       break;
       
     case 'complete':
-      progressStep.textContent = '✅ Complete';
+      progressStep.innerHTML = `${ICONS.checkCircle} Complete`;
       
       // Handle structured complete message
       if (typeof msg.data === 'object') {
@@ -552,7 +566,7 @@ chrome.runtime.onMessage.addListener((msg) => {
       break;
       
     case 'error':
-      progressStep.textContent = '❌ Error';
+      progressStep.innerHTML = `${ICONS.xCircle} Error`;
       
       // Handle structured error
       if (typeof msg.data === 'object') {
@@ -598,7 +612,7 @@ function handleBatchComplete(results) {
   
   // Summary with humanized duration
   const durationStr = humanDuration(totalDurationMs);
-  progressStep.textContent = '✅ Batch Complete';
+  progressStep.innerHTML = `${ICONS.checkCircle} Batch Complete`;
   
   let summaryText = `${success.length} exported`;
   if (failed.length) summaryText += `, ${failed.length} failed`;
@@ -630,7 +644,7 @@ function handleBatchError(error) {
   exportBatchBtn.classList.remove('in-progress');
   floatingStatus.classList.remove('visible');
   
-  progressStep.textContent = '❌ Batch Error';
+  progressStep.innerHTML = `${ICONS.xCircle} Batch Error`;
   progressText.textContent = error;
   progressArea.classList.add('error');
   updateExportBatchButton();
@@ -647,7 +661,7 @@ function showWarnings(warnings) {
   ).join('');
   
   warningsList.classList.remove('collapsed');
-  warningsToggle.textContent = '▼';
+  warningsToggle.innerHTML = ICONS.chevronDown;
 }
 
 // Initial refresh
