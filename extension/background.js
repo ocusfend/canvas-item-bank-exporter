@@ -484,9 +484,28 @@ function transformItemToJSON(item) {
     // File uploads don't have answers
     answers = [];
   }
+  // Essay
+  else if (qbType === 'ESS') {
+    // Essays are manually graded, no correct answer
+    answers = [];
+  }
+  // Numeric
+  else if (qbType === 'NUM') {
+    // Extract correct numeric value from scoring_data
+    const scoringValue = item.scoring_data?.value;
+    if (scoringValue !== undefined && scoringValue !== null && scoringValue !== '') {
+      answers = [{
+        id: 'numeric_answer',
+        text: String(scoringValue),
+        correct: true
+      }];
+    } else {
+      answers = [];
+    }
+  }
 
   // Fallback: legacy answer formats
-  if (answers.length === 0 && qbType !== 'PASSAGE' && qbType !== 'FU') {
+  if (answers.length === 0 && qbType !== 'PASSAGE' && qbType !== 'FU' && qbType !== 'ESS') {
     const baseAnswers = item.answers || item.choices || [];
     answers = baseAnswers.map((answer, idx) => ({
       id: answer.id || `answer_${idx}`,
@@ -505,6 +524,19 @@ function transformItemToJSON(item) {
     points,
     answers,
     allowedFiles: item.interaction_data?.allowed_files || null,
+    // Essay settings
+    essaySettings: qbType === 'ESS' ? {
+      spellCheck: item.properties?.spell_check ?? false,
+      showWordCount: item.properties?.show_word_count ?? false,
+      wordLimit: item.properties?.word_limit ?? false,
+      wordLimitMin: item.properties?.word_limit_min ?? null,
+      wordLimitMax: item.properties?.word_limit_max ?? null
+    } : null,
+    // Numeric settings (margin of error)
+    numericSettings: qbType === 'NUM' ? {
+      marginOfError: item.scoring_data?.margin_of_error ?? null,
+      marginType: item.scoring_data?.margin_type ?? null
+    } : null,
     feedback: {
       correct: item.correct_comments || item.feedback?.correct || '',
       incorrect: item.incorrect_comments || item.feedback?.incorrect || '',
