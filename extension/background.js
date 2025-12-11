@@ -431,6 +431,17 @@ function transformItemToJSON(item) {
   const canvasType = item.question_type || item.interaction_type;
   const qbType = mapCanvasTypeToQBType(canvasType);
 
+  // Debug logging for answer extraction
+  console.log(`[Transform] Item ${item.id}: canvasType="${canvasType}" → qbType="${qbType}"`);
+  console.log(`[Transform] Item ${item.id} data:`, {
+    hasInteractionData: !!item.interaction_data,
+    hasScoringData: !!item.scoring_data,
+    scoringValue: item.scoring_data?.value,
+    choicesCount: item.interaction_data?.choices?.length || 0,
+    hasAnswers: !!item.answers,
+    hasChoices: !!item.choices
+  });
+
   const body = item.question_text || item.stimulus || item.item_body || item.body || '';
   let points = typeof item.points_possible === 'number' ? item.points_possible : 1;
 
@@ -520,6 +531,7 @@ function transformItemToJSON(item) {
 
   // Fallback: legacy answer formats
   if (answers.length === 0 && qbType !== 'PASSAGE' && qbType !== 'FU' && qbType !== 'ESS' && qbType !== 'NUM') {
+    console.log(`[Transform] Item ${item.id}: Using fallback answer extraction`);
     const baseAnswers = item.answers || item.choices || [];
     answers = baseAnswers.map((answer, idx) => ({
       id: answer.id || `answer_${idx}`,
@@ -527,6 +539,10 @@ function transformItemToJSON(item) {
       correct: answer.weight > 0 || answer.correct === true
     }));
   }
+
+  // Log final extraction result
+  console.log(`[Transform] Item ${item.id}: Extracted ${answers.length} answers`, 
+    answers.map(a => ({ id: a.id, correct: a.correct, textPreview: a.text?.substring(0, 30) })));
 
   return {
     id: item.id,
