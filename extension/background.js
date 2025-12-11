@@ -516,9 +516,19 @@ function transformItemToJSON(item) {
   }
   // Numeric
   else if (qbType === 'NUM') {
-    // Extract correct numeric value from scoring_data
+    // scoring_data.value is an array of answer objects: [{id, type, value}]
     const scoringValue = item.scoring_data?.value;
-    if (scoringValue !== undefined && scoringValue !== null && scoringValue !== '') {
+    
+    if (Array.isArray(scoringValue) && scoringValue.length > 0) {
+      // Extract answers from array - each item has {id, type, value}
+      answers = scoringValue.map((answer, idx) => ({
+        id: answer.id || `numeric_${idx}`,
+        text: String(answer.value ?? ''),  // The actual numeric answer
+        correct: true,
+        type: answer.type || 'exactResponse'  // 'exactResponse' or 'marginOfError'
+      }));
+    } else if (typeof scoringValue === 'number' || typeof scoringValue === 'string') {
+      // Fallback for simple numeric value (legacy format)
       answers = [{
         id: 'numeric_answer',
         text: String(scoringValue),
@@ -562,8 +572,17 @@ function transformItemToJSON(item) {
       wordLimitMin: item.properties?.word_limit_min ?? null,
       wordLimitMax: item.properties?.word_limit_max ?? null
     } : null,
-    // Numeric settings (margin of error)
+    // Numeric settings (margin of error and detailed answer config)
     numericSettings: qbType === 'NUM' ? {
+      answers: Array.isArray(item.scoring_data?.value) 
+        ? item.scoring_data.value.map(a => ({
+            id: a.id,
+            type: a.type,  // 'exactResponse' or 'marginOfError'
+            value: a.value,
+            margin: a.margin ?? null,
+            marginType: a.margin_type ?? null
+          }))
+        : null,
       marginOfError: item.scoring_data?.margin_of_error ?? null,
       marginType: item.scoring_data?.margin_type ?? null
     } : null,
