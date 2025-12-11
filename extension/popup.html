@@ -122,15 +122,52 @@
     /* ========== POPUP REVEAL ANIMATION ========== */
     body {
       opacity: 0;
-      transform: translateY(-4px);
-      animation: fadeInPopup 0.18s ease-out forwards;
+      transform: translateY(-8px) scale(0.98);
+      animation: fadeInPopup 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
     }
 
     @keyframes fadeInPopup {
       to { 
         opacity: 1; 
-        transform: translateY(0); 
+        transform: translateY(0) scale(1); 
       }
+    }
+    
+    /* Staggered entrance for key elements */
+    @keyframes slideUp {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    
+    h2 {
+      opacity: 0;
+      animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) 0.05s forwards;
+    }
+    
+    #auth-status {
+      opacity: 0;
+      animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) 0.1s forwards;
+    }
+    
+    #status {
+      opacity: 0;
+      animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) 0.15s forwards;
+    }
+    
+    #bank-list-area, #exportBtn, #exportBatchBtn {
+      opacity: 0;
+      animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) 0.2s forwards;
+    }
+    
+    .footer {
+      opacity: 0;
+      animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) 0.25s forwards;
     }
 
     /* ========== REDUCED MOTION SUPPORT ========== */
