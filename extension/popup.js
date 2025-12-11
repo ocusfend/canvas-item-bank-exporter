@@ -291,6 +291,7 @@ function showBankDetected(bank) {
   const courseInfo = bank.courseId ? ` • Course ${bank.courseId}` : '';
   
   statusEl.innerHTML = `${typeIcon} Bank detected: <strong>${bank.id}</strong>${courseInfo}<span class="type-badge ${typeBadgeClass}" title="${typeTooltip}">${typeLabel}</span>`;
+  statusEl.classList.remove('loading');
   statusEl.classList.add('detected');
   
   exportBtn.style.display = 'block';
@@ -305,8 +306,9 @@ function showBankDetected(bank) {
 }
 
 function showNoBank() {
-  statusEl.textContent = "No question bank detected. Navigate to a Question Bank in Canvas.";
+  statusEl.textContent = "Waiting for bank detection...";
   statusEl.classList.remove('detected');
+  statusEl.classList.add('loading');
   exportBtn.style.display = 'block';
   exportBtn.disabled = true;
   exportBtn.innerHTML = `${ICONS.fileDown} Export JSON`;
@@ -326,6 +328,7 @@ function showBankList(bankListData) {
   const { courseId, banks } = bankListData;
   
   statusEl.innerHTML = `${ICONS.books} Course ${courseId}: <strong>${banks.length} Question Banks</strong>`;
+  statusEl.classList.remove('loading');
   statusEl.classList.add('detected');
   
   // Hide single export button, show batch UI
