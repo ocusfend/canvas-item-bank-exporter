@@ -662,22 +662,15 @@ function transformItemToJSON(item) {
   // Hot Spot - scoring_data.value is array of {id, type, coordinates}
   else if (qbType === 'HS') {
     const scoringValue = item.scoring_data?.value;
+    const hotspots = normalizeToArray(scoringValue);
     
-    if (Array.isArray(scoringValue)) {
-      answers = scoringValue.map((hotspot, idx) => ({
+    if (hotspots.length > 0) {
+      answers = hotspots.map((hotspot, idx) => ({
         id: hotspot.id || `hotspot_${idx}`,
         type: hotspot.type || 'unknown',  // 'square', 'circle', 'polygon'
         coordinates: hotspot.coordinates || null,
         correct: true
       }));
-    } else if (scoringValue && typeof scoringValue === 'object') {
-      // Single hotspot object
-      answers = [{
-        id: scoringValue.id || 'hotspot_0',
-        type: scoringValue.type || 'unknown',
-        coordinates: scoringValue.coordinates || null,
-        correct: true
-      }];
     } else {
       answers = [];
     }
@@ -685,10 +678,10 @@ function transformItemToJSON(item) {
   // Formula - scoring_data has variables and generated solutions
   else if (qbType === 'FORM') {
     const scoringValue = item.scoring_data?.value;
-    const variables = item.scoring_data?.variables || [];
-    const solutions = item.scoring_data?.generated_solutions || [];
+    const variables = normalizeToArray(item.scoring_data?.variables);
+    const solutions = normalizeToArray(item.scoring_data?.generated_solutions);
     
-    if (Array.isArray(solutions) && solutions.length > 0) {
+    if (solutions.length > 0) {
       answers = solutions.map((sol, idx) => ({
         id: `solution_${idx}`,
         inputs: sol.inputs || {},
@@ -856,17 +849,26 @@ function transformItemToJSON(item) {
     } : null,
     hotSpotSettings: qbType === 'HS' ? {
       imageUrl: item.interaction_data?.image_url || null,
-      hotspotsCount: item.interaction_data?.hotspots_count || 0
+      hotspots: normalizeToArray(item.scoring_data?.value).map((h, idx) => ({
+        id: h.id || `hotspot_${idx}`,
+        type: h.type || 'unknown',
+        coordinates: h.coordinates || null
+      }))
     } : null,
     formulaSettings: qbType === 'FORM' ? {
-      variables: (item.scoring_data?.variables || []).map(v => ({
+      variables: normalizeToArray(item.scoring_data?.variables).map(v => ({
         name: v.name,
         min: v.min,
         max: v.max,
         precision: v.precision ?? 0
       })),
       answerCount: item.scoring_data?.answer_count ?? 1,
-      formula: item.scoring_data?.formula || null
+      formula: item.scoring_data?.formula || null,
+      solutions: normalizeToArray(item.scoring_data?.generated_solutions).map((sol, idx) => ({
+        id: `solution_${idx}`,
+        inputs: sol.inputs || {},
+        output: sol.output
+      }))
     } : null,
     
     // === RAW DATA PRESERVATION ===
