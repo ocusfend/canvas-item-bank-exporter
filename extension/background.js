@@ -466,12 +466,26 @@ function transformItemToJSON(item) {
   else if (qbType === 'SA') {
     const scoringValue = item.scoring_data?.value;
     if (Array.isArray(scoringValue)) {
-      answers = scoringValue.map((blank, idx) => ({
-        id: blank.id || `blank_${idx}`,
-        text: blank.scoring_data?.blank_text ||
-              (Array.isArray(blank.scoring_data?.value) ? blank.scoring_data.value.join(' | ') : ''),
-        correct: true
-      }));
+      // Check if it's complex fill-blank (array of objects) or simple short answer (array of strings)
+      if (scoringValue.length > 0 && typeof scoringValue[0] === 'object') {
+        // Complex fill-blank with multiple blanks
+        answers = scoringValue.map((blank, idx) => ({
+          id: blank.id || `blank_${idx}`,
+          text: blank.scoring_data?.blank_text ||
+                (Array.isArray(blank.scoring_data?.value) ? blank.scoring_data.value.join(' | ') : ''),
+          correct: true
+        }));
+      } else {
+        // Simple short answer - array of acceptable string answers
+        answers = scoringValue.map((answer, idx) => ({
+          id: `answer_${idx}`,
+          text: String(answer),
+          correct: true
+        }));
+      }
+    } else if (typeof scoringValue === 'string' && scoringValue) {
+      // Single string answer
+      answers = [{ id: 'answer_0', text: scoringValue, correct: true }];
     }
   }
   // Text Block / Passage
@@ -505,7 +519,7 @@ function transformItemToJSON(item) {
   }
 
   // Fallback: legacy answer formats
-  if (answers.length === 0 && qbType !== 'PASSAGE' && qbType !== 'FU' && qbType !== 'ESS') {
+  if (answers.length === 0 && qbType !== 'PASSAGE' && qbType !== 'FU' && qbType !== 'ESS' && qbType !== 'NUM') {
     const baseAnswers = item.answers || item.choices || [];
     answers = baseAnswers.map((answer, idx) => ({
       id: answer.id || `answer_${idx}`,
