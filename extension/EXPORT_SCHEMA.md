@@ -1,25 +1,56 @@
-# Canvas Item Bank Export Schema v2.2
+# Canvas Quiz Bank Export Schema
 
-This document describes the JSON export format produced by the Canvas Item Bank Exporter extension.
+This document describes the JSON export formats produced by the Canvas Quiz Bank Exporter extension.
 
 ## Overview
 
-The export produces a single JSON file containing all items from a Canvas item bank, with complete metadata, scoring data, and type-specific configurations preserved.
+The extension supports two export formats:
+1. **New Quizzes Item Banks** (`format: "item_bank"`) - v2.2
+2. **Classic Quiz Question Banks** (`format: "classic"`) - v1.0
 
 ---
+
+## Format Detection
+
+All exports include a `format` field at the root level:
+
+| Format Value | Export Type | Schema Version |
+|--------------|-------------|----------------|
+| `"item_bank"` | New Quizzes Item Bank | 2.2 |
+| `"classic"` | Classic Quiz Question Bank | 1.0 |
+
+### Import Detection Logic
+
+```typescript
+function detectExportFormat(data: any): 'classic' | 'item_bank' | 'unknown' {
+  // Primary: Explicit format field
+  if (data.format === 'classic') return 'classic';
+  if (data.format === 'item_bank') return 'item_bank';
+  
+  // Fallback: Structural detection
+  if (data.questions && data.bank?.courseId !== undefined) return 'classic';
+  if (data.items && data.bank?.contextUuid) return 'item_bank';
+  
+  return 'unknown';
+}
+```
+
+---
+
+# New Quizzes Item Bank Export Schema (v2.2)
 
 ## Root Object
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `exportVersion` | string | Schema version (currently `"2.2"`) |
+| `format` | `"item_bank"` | Format discriminator |
+| `exportVersion` | string | Schema version (`"2.2"`) |
+| `extensionVersion` | string | Extension version that created export |
 | `exportedAt` | string | ISO 8601 timestamp of export |
 | `bank` | object | Bank metadata |
 | `summary` | object | Export statistics |
 | `items` | array | Array of exported items |
-| `skipped` | array | Always empty in v2.1 (kept for backwards compatibility) |
-
----
+| `skipped` | array | Always empty (backwards compatibility) |
 
 ## Bank Object
 
@@ -39,18 +70,6 @@ The export produces a single JSON file containing all items from a Canvas item b
 | `alignmentData` | object\|null | Outcome alignment data |
 | `metadata` | object\|null | Additional bank metadata |
 
----
-
-## Summary Object
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `totalItems` | number | Total items in bank |
-| `exportedItems` | number | Items included in export (same as total in v2.1) |
-| `skippedItems` | number | Always `0` in v2.1 |
-
----
-
 ## Item Object
 
 ### Identity Fields
@@ -65,32 +84,10 @@ The export produces a single JSON file containing all items from a Canvas item b
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `type` | string | Normalized question type code (see Question Types) |
+| `type` | string | Normalized question type code |
 | `originalType` | string | Original Canvas/Learnosity type slug |
 | `entryType` | string | Entry type (`"Item"` or `"Stimulus"`) |
 | `interactionType` | object\|null | Full interaction type details |
-
-#### InteractionType Object
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string\|null | Interaction type ID |
-| `slug` | string | Type slug identifier |
-| `name` | string\|null | Human-readable name |
-| `propertiesSchema` | object\|null | JSON schema for properties |
-| `scoringAlgorithmOptions` | array | Available scoring algorithms |
-| `scoringAlgorithmDefault` | string\|null | Default scoring algorithm |
-| `userResponseTypeOptions` | array | Response type options |
-
-### Status & Metadata
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `status` | string\|null | Item status |
-| `archived` | boolean | Whether item is archived |
-| `label` | string\|null | Item label |
-| `createdAt` | string\|null | ISO 8601 creation timestamp |
-| `updatedAt` | string\|null | ISO 8601 last update timestamp |
 
 ### Content
 
@@ -100,70 +97,252 @@ The export produces a single JSON file containing all items from a Canvas item b
 | `body` | string | Question body (HTML) |
 | `points` | number | Points possible |
 
-### Relationships
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `stimulusId` | string\|null | Associated stimulus/passage ID |
-| `outcomeAlignment` | string\|null | Outcome alignment GUID |
-
-### Metadata & Tags
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `metadata.tags` | array | Array of tag strings |
-| `metadata.tagAssociations` | array | Tag association objects |
-
 ### Answers
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `answers` | array | Answer objects (format varies by type) |
 
-### Scoring Configuration
+---
+
+# Classic Quiz Question Bank Export Schema (v1.0)
+
+## Root Object
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `scoring.algorithm` | string\|null | Scoring algorithm used |
-| `scoring.userResponseType` | string\|null | User response type |
-| `scoring.calculatorType` | string | Calculator type (`"none"`, `"basic"`, `"scientific"`) |
-| `scoring.marginOfError` | number\|null | Margin of error for numeric |
-| `scoring.marginType` | string\|null | Margin type (`"absolute"` or `"percent"`) |
+| `format` | `"classic"` | Format discriminator |
+| `exportVersion` | `"1.0"` | Schema version |
+| `extensionVersion` | string | Extension version that created export |
+| `exportedAt` | string | ISO 8601 timestamp |
+| `canvasSignature` | object | DOM version detection info |
+| `typeMap` | object | Classic type mapping used |
+| `bank` | object | Bank metadata |
+| `summary` | object | Statistics |
+| `warnings` | array\|null | Parsing warnings |
+| `groups` | array\|null | Question groups for random selection |
+| `questions` | array | All questions |
 
-### Properties
+## Canvas Signature Object
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `properties.varyPointsByAnswer` | boolean | Points vary by answer |
-| `properties.shuffleRules` | object\|null | Shuffle configuration |
-| `properties.spellCheck` | boolean\|null | Spell check enabled |
-| `properties.showWordCount` | boolean\|null | Show word count |
-| `properties.wordLimit` | boolean\|null | Word limit enabled |
-| `properties.wordLimitMin` | number\|null | Minimum word count |
-| `properties.wordLimitMax` | number\|null | Maximum word count |
+| `domVersion` | string | Detected DOM version (`"2020+"`, `"2022+"`, `"unknown"`) |
+| `indicators` | object | Detection indicators |
+| `extractedAt` | string | ISO 8601 timestamp |
+
+## Bank Object (Classic)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Bank ID (numeric) |
+| `courseId` | string\|null | Course ID (null for shared banks) |
+| `title` | string | Bank title |
+| `type` | `"assessment_question_bank"` | Bank type |
+
+## Summary Object
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `totalQuestions` | number | Total questions in bank |
+| `questionTypes` | object | Count by type code |
+
+## Groups Object (Optional)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Group identifier |
+| `title` | string | Group title |
+| `pickCount` | number | Number of questions to pick |
+| `questionIds` | array | Question IDs in group |
+
+## Question Object (Classic)
+
+### Identity Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Canvas question ID |
+| `uuid` | string | Globally unique identifier |
+| `assessmentId` | string | Assessment question ID |
+
+### Type Information
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | Normalized type code (see table below) |
+| `originalType` | string | Original Canvas type slug |
+
+### Content
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `title` | string | Question title/name |
+| `body` | string | Question body (cleaned HTML) |
+| `bodyRaw` | string | Original HTML (lossless) |
+| `bodyText` | string\|null | Plain text version |
+| `points` | number | Points possible |
+
+### Type-Specific Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `blanks` | array\|null | Blank IDs for FIMB/MDD |
+| `calculatedData` | object\|null | Formula data for CALC |
+| `isInformational` | boolean\|undefined | True for text-only questions |
+
+### Answers
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `answers` | array\|object | Answer data (format varies by type) |
 
 ### Feedback
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `feedback.correct` | string | Feedback for correct answers |
-| `feedback.incorrect` | string | Feedback for incorrect answers |
-| `feedback.neutral` | string | Neutral feedback |
-| `answerFeedback` | object | Per-answer feedback keyed by answer ID |
+| `feedback` | object\|null | Normalized feedback structure |
 
-### Raw Data Preservation
+### Metadata
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `rawInteractionData` | object\|null | Complete original interaction_data |
-| `rawScoringData` | object\|null | Complete original scoring_data |
-| `allowedFiles` | array\|null | Allowed file types for upload questions |
+| `migratableToNewQuizzes` | boolean | Can migrate to New Quizzes |
+| `hash` | string | SHA-256 integrity hash |
 
 ---
 
-## Question Types
+## Classic Question Types
 
-### Type Codes
+| Code | Canvas Type | Description |
+|------|-------------|-------------|
+| `MC` | multiple_choice_question | Multiple Choice |
+| `TF` | true_false_question | True/False |
+| `MR` | multiple_answers_question | Multiple Response |
+| `SA` | short_answer_question | Short Answer |
+| `FIMB` | fill_in_multiple_blanks_question | Fill in Multiple Blanks |
+| `MDD` | multiple_dropdowns_question | Multiple Dropdowns |
+| `MAT` | matching_question | Matching |
+| `NUM` | numerical_question | Numerical |
+| `CALC` | calculated_question | Calculated/Formula |
+| `ESS` | essay_question | Essay |
+| `FU` | file_upload_question | File Upload |
+| `TB` | text_only_question | Text Block (informational) |
+
+---
+
+## Classic Answer Formats
+
+### Standard Answers (MC, TF, MR, SA, FIMB, MDD)
+
+```json
+{
+  "answers": [
+    {
+      "id": "answer_id",
+      "text": "Answer text",
+      "html": "<p>Answer HTML</p>",
+      "correct": true,
+      "weight": 100,
+      "blankId": "blank_1",
+      "feedback": {
+        "html": "<p>Feedback</p>",
+        "text": "Feedback"
+      }
+    }
+  ]
+}
+```
+
+### Matching Pairs
+
+```json
+{
+  "answers": {
+    "type": "matching",
+    "pairs": [
+      {
+        "id": "pair_id",
+        "left": "Left side text",
+        "right": "Right side match",
+        "matchId": "match_id"
+      }
+    ],
+    "distractors": [
+      {
+        "id": "distractor_id",
+        "text": "Distractor text"
+      }
+    ]
+  }
+}
+```
+
+### Numerical Answers
+
+```json
+{
+  "answers": [
+    {
+      "id": "answer_id",
+      "numericalType": "exact",
+      "exact": 42,
+      "margin": 0,
+      "rangeStart": null,
+      "rangeEnd": null,
+      "precision": null,
+      "precisionScale": null,
+      "correct": true,
+      "weight": 100
+    }
+  ]
+}
+```
+
+#### Numerical Type Values
+
+| Value | Description |
+|-------|-------------|
+| `exact` | Exact value match |
+| `exact_with_margin` | Exact value with ± margin of error |
+| `range` | Value within range (min-max) |
+| `approximate` | Approximate with precision |
+
+### Calculated Question Data
+
+```json
+{
+  "calculatedData": {
+    "variables": [
+      { "name": "x", "min": 1, "max": 10, "decimalPlaces": 0 }
+    ],
+    "formulas": ["x * 2"],
+    "tolerance": 0.01,
+    "answerDecimalPlaces": 2,
+    "solutions": [
+      { "x": 5, "_answer": 10 }
+    ]
+  }
+}
+```
+
+---
+
+## Feedback Structure (Classic)
+
+```json
+{
+  "feedback": {
+    "correct": { "html": "<p>Great!</p>", "text": "Great!" },
+    "incorrect": { "html": "<p>Try again</p>", "text": "Try again" },
+    "neutral": { "html": null, "text": null }
+  }
+}
+```
+
+---
+
+## New Quizzes Question Types
 
 | Code | Full Name | Canvas Slugs |
 |------|-----------|--------------|
@@ -189,233 +368,69 @@ The export produces a single JSON file containing all items from a Canvas item b
 
 ---
 
-## Type-Specific Answer Formats
+## Example Exports
 
-### Multiple Choice (MC) / Multiple Response (MR)
+### Classic Quiz Export
 
 ```json
 {
-  "answers": [
+  "format": "classic",
+  "exportVersion": "1.0",
+  "extensionVersion": "0.6.0",
+  "exportedAt": "2024-01-15T10:30:00.000Z",
+  "canvasSignature": {
+    "domVersion": "2022+",
+    "indicators": { "hasCsrfToken": true, "hasInstui": true },
+    "extractedAt": "2024-01-15T10:30:00.000Z"
+  },
+  "typeMap": { "multiple_choice_question": "MC", "true_false_question": "TF" },
+  "bank": {
+    "id": "12345",
+    "courseId": "67890",
+    "title": "Chapter 5 Questions",
+    "type": "assessment_question_bank"
+  },
+  "summary": {
+    "totalQuestions": 10,
+    "questionTypes": { "MC": 6, "TF": 4 }
+  },
+  "warnings": null,
+  "groups": null,
+  "questions": [
     {
-      "id": "choice_uuid",
-      "text": "Answer text (HTML stripped)",
-      "correct": true
+      "id": "123",
+      "uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "assessmentId": "123",
+      "type": "MC",
+      "originalType": "multiple_choice_question",
+      "title": "Sample Question",
+      "body": "<p>What is 2 + 2?</p>",
+      "bodyRaw": "<p>What is 2 + 2?</p>",
+      "bodyText": "What is 2 + 2?",
+      "points": 1,
+      "answers": [
+        { "id": "a1", "text": "3", "correct": false, "weight": 0 },
+        { "id": "a2", "text": "4", "correct": true, "weight": 100 }
+      ],
+      "feedback": {
+        "correct": { "html": "<p>Correct!</p>", "text": "Correct!" },
+        "incorrect": { "html": "<p>Try again</p>", "text": "Try again" },
+        "neutral": null
+      },
+      "migratableToNewQuizzes": true,
+      "hash": "abc123..."
     }
   ]
 }
 ```
 
-### True/False (TF)
+### New Quizzes Export
 
 ```json
 {
-  "answers": [
-    { "id": "true", "text": "True", "correct": true },
-    { "id": "false", "text": "False", "correct": false }
-  ]
-}
-```
-
-### Short Answer (SA)
-
-```json
-{
-  "answers": [
-    { "id": "answer_0", "text": "acceptable answer", "correct": true },
-    { "id": "answer_1", "text": "another acceptable answer", "correct": true }
-  ]
-}
-```
-
-### Numeric (NUM)
-
-```json
-{
-  "answers": [
-    {
-      "id": "numeric_0",
-      "text": "42",
-      "correct": true,
-      "type": "exactResponse"
-    }
-  ],
-  "numericSettings": {
-    "answers": [
-      {
-        "id": "answer_uuid",
-        "type": "exactResponse",
-        "value": 42,
-        "margin": 0.5,
-        "marginType": "absolute"
-      }
-    ]
-  }
-}
-```
-
-### Matching (MAT)
-
-```json
-{
-  "answers": [
-    {
-      "id": "question_uuid",
-      "questionText": "Left side text",
-      "answerId": "answer_uuid",
-      "answerText": "Right side match",
-      "correct": true
-    }
-  ],
-  "matchingSettings": {
-    "questions": [
-      { "id": "q_uuid", "text": "Question text" }
-    ],
-    "answers": [
-      { "id": "a_uuid", "text": "Answer text" }
-    ],
-    "shuffleQuestions": false,
-    "shuffleAnswers": false
-  }
-}
-```
-
-### Categorization (CAT)
-
-```json
-{
-  "answers": [
-    {
-      "id": "category_uuid",
-      "categoryText": "Category name",
-      "answers": ["Item 1", "Item 2"],
-      "correct": true
-    }
-  ],
-  "categorizationSettings": {
-    "categories": [
-      { "id": "cat_uuid", "text": "Category name" }
-    ],
-    "distractors": [
-      { "id": "distractor_uuid", "text": "Item text" }
-    ],
-    "scoreMethod": "allOrNothing",
-    "shuffleCategories": false,
-    "shuffleDistractors": true
-  }
-}
-```
-
-### Ordering (ORD)
-
-```json
-{
-  "answers": [
-    {
-      "id": "item_uuid",
-      "text": "First item",
-      "position": 1,
-      "correct": true
-    },
-    {
-      "id": "item_uuid",
-      "text": "Second item",
-      "position": 2,
-      "correct": true
-    }
-  ],
-  "orderingSettings": {
-    "topLabel": "First",
-    "bottomLabel": "Last",
-    "includeLabels": true,
-    "displayAsParagraph": false,
-    "choices": [
-      { "id": "choice_uuid", "text": "Item text", "position": 1 }
-    ]
-  }
-}
-```
-
-### Hot Spot (HS)
-
-```json
-{
-  "answers": [
-    {
-      "id": "hotspot_uuid",
-      "type": "circle",
-      "coordinates": { "x": 100, "y": 150, "radius": 50 },
-      "correct": true
-    }
-  ],
-  "hotSpotSettings": {
-    "imageUrl": "https://...",
-    "hotspots": [
-      {
-        "id": "hotspot_uuid",
-        "type": "circle",
-        "coordinates": { "x": 100, "y": 150, "radius": 50 }
-      }
-    ]
-  }
-}
-```
-
-### Formula (FORM)
-
-```json
-{
-  "answers": [
-    {
-      "id": "solution_0",
-      "inputs": { "x": 5, "y": 3 },
-      "output": "15",
-      "correct": true
-    }
-  ],
-  "formulaSettings": {
-    "variables": [
-      { "name": "x", "min": 1, "max": 10, "precision": 0 }
-    ],
-    "answerCount": 5,
-    "formula": "x * y",
-    "solutions": [
-      { "id": "solution_0", "inputs": { "x": 5, "y": 3 }, "output": 15 }
-    ]
-  }
-}
-```
-
-### Essay (ESS)
-
-```json
-{
-  "answers": [],
-  "essaySettings": {
-    "spellCheck": true,
-    "showWordCount": true,
-    "wordLimit": true,
-    "wordLimitMin": 100,
-    "wordLimitMax": 500
-  }
-}
-```
-
-### Passage (PASSAGE) / File Upload (FU)
-
-```json
-{
-  "answers": [],
-  "allowedFiles": ["pdf", "docx", "jpg"]
-}
-```
-
----
-
-## Example Export
-
-```json
-{
+  "format": "item_bank",
   "exportVersion": "2.2",
+  "extensionVersion": "0.6.0",
   "exportedAt": "2024-01-15T10:30:00.000Z",
   "bank": {
     "id": "550e8400-e29b-41d4-a716-446655440000",
@@ -423,14 +438,9 @@ The export produces a single JSON file containing all items from a Canvas item b
     "description": "Assessment items for Chapter 5",
     "status": "active",
     "archived": false,
-    "createdAt": "2024-01-01T00:00:00.000Z",
-    "updatedAt": "2024-01-15T10:00:00.000Z",
     "contextId": "12345",
     "contextType": "Course",
-    "contextUuid": "course-uuid",
-    "workflowState": "active",
-    "alignmentData": null,
-    "metadata": {}
+    "contextUuid": "course-uuid"
   },
   "summary": {
     "totalItems": 25,
@@ -440,84 +450,17 @@ The export produces a single JSON file containing all items from a Canvas item b
   "items": [
     {
       "id": "item-uuid-1",
-      "bankId": "bank-uuid",
-      "bankEntryId": "entry-uuid",
       "type": "MC",
       "originalType": "choice",
-      "entryType": "Item",
-      "interactionType": {
-        "id": "1",
-        "slug": "choice",
-        "name": "Multiple Choice",
-        "propertiesSchema": {},
-        "scoringAlgorithmOptions": ["allOrNothing"],
-        "scoringAlgorithmDefault": "allOrNothing",
-        "userResponseTypeOptions": ["choice"]
-      },
-      "status": "active",
-      "archived": false,
-      "label": null,
-      "createdAt": "2024-01-02T00:00:00.000Z",
-      "updatedAt": "2024-01-10T00:00:00.000Z",
       "title": "Sample Question",
       "body": "<p>What is 2 + 2?</p>",
       "points": 1,
-      "stimulusId": null,
-      "outcomeAlignment": null,
-      "metadata": {
-        "tags": ["math", "addition"],
-        "tagAssociations": []
-      },
       "answers": [
         { "id": "a1", "text": "3", "correct": false },
-        { "id": "a2", "text": "4", "correct": true },
-        { "id": "a3", "text": "5", "correct": false }
-      ],
-      "scoring": {
-        "algorithm": "allOrNothing",
-        "userResponseType": "choice",
-        "calculatorType": "none",
-        "marginOfError": null,
-        "marginType": null
-      },
-      "properties": {
-        "varyPointsByAnswer": false,
-        "shuffleRules": { "choices": { "shuffled": true } },
-        "spellCheck": null,
-        "showWordCount": null,
-        "wordLimit": null,
-        "wordLimitMin": null,
-        "wordLimitMax": null
-      },
-      "feedback": {
-        "correct": "Great job!",
-        "incorrect": "Try again.",
-        "neutral": ""
-      },
-      "answerFeedback": {},
-      "essaySettings": null,
-      "numericSettings": null,
-      "matchingSettings": null,
-      "categorizationSettings": null,
-      "orderingSettings": null,
-      "hotSpotSettings": null,
-      "formulaSettings": null,
-      "allowedFiles": null,
-      "rawInteractionData": { "choices": [...] },
-      "rawScoringData": { "value": "a2" }
+        { "id": "a2", "text": "4", "correct": true }
+      ]
     }
   ],
   "skipped": []
 }
 ```
-
----
-
-## Version History
-
-| Version | Changes |
-|---------|---------|
-| 2.2 | Enhanced type-specific settings: matchingSettings now includes separate answers array and shuffleAnswers; categorizationSettings uses distractors instead of choices with shuffle options; orderingSettings adds includeLabels and displayAsParagraph; hotSpotSettings now includes full hotspots array; formulaSettings includes solutions array. Added normalizeToArray handling for object-style data structures. |
-| 2.1 | All question types exported (no filtering), added type mappings for MAT, CAT, ORD, HS, FORM, DD, DRAW, HL, CLOZE |
-| 2.0 | Added comprehensive metadata, raw data preservation, type-specific settings |
-| 1.0 | Initial export format with basic question types |

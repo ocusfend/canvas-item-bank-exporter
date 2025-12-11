@@ -91,6 +91,26 @@ window.addEventListener("CanvasExporter_FetchResponse", (e) => {
 let hasRespondedToRequest = new Set();
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // Handle HTML page fetch requests (for Classic Quiz banks)
+  if (msg.type === "FETCH_HTML") {
+    fetch(msg.url, { credentials: 'include' })
+      .then(response => {
+        if (response.redirected && response.url.includes('/login')) {
+          throw new Error('Authentication required - please log into Canvas');
+        }
+        if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        return response.text();
+      })
+      .then(html => {
+        if (html.includes('id="login_form"') || html.includes('Log In to Canvas')) {
+          throw new Error('Session expired - please log into Canvas');
+        }
+        sendResponse({ success: true, html });
+      })
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+  
   // Handle FETCH messages - ALL frames can respond, but only the one with tokens will
   // The page context (inject.js) will check if it has tokens before responding
   if (msg.type === "FETCH_API" || msg.type === "FETCH_PAGINATED") {
