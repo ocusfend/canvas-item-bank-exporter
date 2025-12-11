@@ -60,7 +60,9 @@ async function hashQuestion(question) {
 
 function generateCanvasSignature(doc) {
   const indicators = {
-    hasCsrfToken: !!doc.querySelector('meta[name="csrf-token"]'),
+    // Fix: Also check for authenticity_token input (Canvas uses this)
+    hasCsrfToken: !!doc.querySelector('meta[name="csrf-token"]') || 
+                  !!doc.querySelector('input[name="authenticity_token"]'),
     hasNewRceEditor: !!doc.querySelector('[data-rce-wrapper]'),
     hasInstui: !!doc.querySelector('[class*="__instructure"]'),
     questionHolderClass: !!doc.querySelector('.question_holder'),
@@ -93,8 +95,16 @@ function parseClassicBankHtml(html) {
     throw new Error('Authentication required - please log into Canvas first');
   }
   
+  // Fix: Remove noscript elements before parsing to avoid selecting wrong h1
+  doc.querySelectorAll('noscript').forEach(el => el.remove());
+  
   const canvasSignature = generateCanvasSignature(doc);
-  const titleEl = doc.querySelector('h1') || doc.querySelector('.page-title');
+  // Fix: Use more specific selector for bank title, avoiding noscript content
+  const titleEl = doc.querySelector('.quiz-header .displaying h1') || 
+                  doc.querySelector('.quiz-header h1') ||
+                  doc.querySelector('#breadcrumbs + div h1') ||
+                  doc.querySelector('h1:not(noscript h1)') || 
+                  doc.querySelector('.page-title');
   const bankTitle = titleEl?.textContent?.trim() || 'Untitled Bank';
   const groups = extractQuestionGroups(doc);
   
@@ -261,48 +271,72 @@ function extractClassicAnswers(questionDiv, questionType, questionId, warnings) 
 
 function extractMatchingPairs(questionDiv, questionId, warnings) {
   const pairs = [];
-  const matchHolders = questionDiv.querySelectorAll('.matching_answer_container, .answer');
+  const distractors = [];
+  const matchHolders = questionDiv.querySelectorAll('.answers_wrapper .answer, .matching_answer_container');
   
   matchHolders.forEach((holder, idx) => {
     const leftEl = holder.querySelector('.answer_match_left, .left_side');
     const rightEl = holder.querySelector('.answer_match_right, .right_side');
+    const matchIdEl = holder.querySelector('.match_id');
     
-    if (leftEl && rightEl) {
-      pairs.push({
-        id: `match_${idx}`,
-        left: cleanHtml(leftEl.innerHTML?.trim() || leftEl.textContent?.trim() || ''),
-        right: cleanHtml(rightEl.innerHTML?.trim() || rightEl.textContent?.trim() || '')
-      });
+    // Fix: Extract clean text, checking for .correct_answer span inside right side
+    const leftText = leftEl?.textContent?.trim() || '';
+    const correctAnswerSpan = rightEl?.querySelector('.correct_answer');
+    const rightText = correctAnswerSpan?.textContent?.trim() || rightEl?.textContent?.trim() || '';
+    
+    // Skip if both sides empty
+    if (!leftText && !rightText) return;
+    
+    // Distractor if only right side has content
+    if (!leftText && rightText) {
+      distractors.push({ id: `distractor_${idx}`, text: rightText });
+      return;
     }
+    
+    pairs.push({
+      id: `match_${idx}`,
+      left: leftText,
+      right: rightText,
+      matchId: matchIdEl?.textContent?.trim() || null
+    });
   });
   
   if (pairs.length === 0) warnings.add(questionId, 'No matching pairs found');
-  return pairs;
+  
+  // Return object with pairs and optional distractors for matching questions
+  return { type: 'matching', pairs, distractors: distractors.length > 0 ? distractors : null };
 }
 
 function extractNumericalAnswer(answerDiv, answerId, questionId, warnings) {
-  const exactEl = answerDiv.querySelector('.numerical_answer_exact, .exact_answer');
-  const marginEl = answerDiv.querySelector('.numerical_answer_margin, .error_margin');
-  const startEl = answerDiv.querySelector('.numerical_answer_start, .start_range');
-  const endEl = answerDiv.querySelector('.numerical_answer_end, .end_range');
-  const approxEl = answerDiv.querySelector('.numerical_answer_approximate, .approximate_answer');
-  const precisionEl = answerDiv.querySelector('.numerical_answer_precision, .precision');
+  // Fix: Use Canvas's actual class names for numerical answer elements
+  const exactEl = answerDiv.querySelector('.answer_exact, .numerical_answer_exact, .exact_answer');
+  const marginEl = answerDiv.querySelector('.answer_error_margin, .numerical_answer_margin, .error_margin');
+  const startEl = answerDiv.querySelector('.answer_range_start, .numerical_answer_start, .start_range');
+  const endEl = answerDiv.querySelector('.answer_range_end, .numerical_answer_end, .end_range');
+  const approxEl = answerDiv.querySelector('.answer_approximate, .numerical_answer_approximate, .approximate_answer');
+  const precisionEl = answerDiv.querySelector('.answer_precision, .numerical_answer_precision, .precision');
+  
+  // Fix: Determine type from visible numerical answer div
+  const hasExactVisible = answerDiv.querySelector('.numerical_exact_answer:not([style*="display:none"]):not([style*="display: none"])');
+  const hasRangeVisible = answerDiv.querySelector('.numerical_range_answer:not([style*="display:none"]):not([style*="display: none"])');
+  const hasPrecisionVisible = answerDiv.querySelector('.numerical_precision_answer:not([style*="display:none"]):not([style*="display: none"])');
   
   let numericalType = 'unknown';
   let value = null, margin = null, start = null, end = null, precision = null;
   
-  if (exactEl?.textContent?.trim()) {
+  // Try to detect type from visible container first
+  if (hasExactVisible || exactEl?.textContent?.trim()) {
     numericalType = 'exact';
-    value = parseFloat(exactEl.textContent.trim());
-    if (marginEl?.textContent?.trim()) margin = parseFloat(marginEl.textContent.trim());
-  } else if (startEl?.textContent?.trim() && endEl?.textContent?.trim()) {
+    value = parseFloat(exactEl?.textContent?.trim()) || 0;
+    margin = parseFloat(marginEl?.textContent?.trim()) || 0;
+  } else if (hasRangeVisible || (startEl?.textContent?.trim() && endEl?.textContent?.trim())) {
     numericalType = 'range';
-    start = parseFloat(startEl.textContent.trim());
-    end = parseFloat(endEl.textContent.trim());
-  } else if (approxEl?.textContent?.trim()) {
+    start = parseFloat(startEl?.textContent?.trim()) || 0;
+    end = parseFloat(endEl?.textContent?.trim()) || 0;
+  } else if (hasPrecisionVisible || approxEl?.textContent?.trim()) {
     numericalType = 'approximate';
-    value = parseFloat(approxEl.textContent.trim());
-    if (precisionEl?.textContent?.trim()) precision = parseInt(precisionEl.textContent.trim());
+    value = parseFloat(approxEl?.textContent?.trim()) || 0;
+    precision = parseInt(precisionEl?.textContent?.trim()) || 0;
   }
   
   if (numericalType === 'unknown') {
@@ -315,49 +349,104 @@ function extractNumericalAnswer(answerDiv, answerId, questionId, warnings) {
 
 function extractCalculatedQuestionData(questionDiv) {
   const variables = [];
-  const variableDivs = questionDiv.querySelectorAll('.variable_definition, .variable');
   
-  variableDivs.forEach(varDiv => {
-    const nameEl = varDiv.querySelector('.variable_name, .name');
-    const minEl = varDiv.querySelector('.variable_min, .min');
-    const maxEl = varDiv.querySelector('.variable_max, .max');
-    const scaleEl = varDiv.querySelector('.variable_scale, .decimal_places');
-    
-    if (nameEl?.textContent?.trim()) {
-      variables.push({
-        name: nameEl.textContent.trim(),
-        min: parseFloat(minEl?.textContent?.trim()) || 0,
-        max: parseFloat(maxEl?.textContent?.trim()) || 100,
-        scale: parseInt(scaleEl?.textContent?.trim()) || 0
-      });
-    }
-  });
+  // Fix: Use Canvas's actual table structure for variable definitions
+  const variableTable = questionDiv.querySelector('.variable_definitions tbody, .variables_table tbody');
+  if (variableTable) {
+    variableTable.querySelectorAll('tr').forEach(row => {
+      const cells = row.querySelectorAll('td');
+      const nameCell = row.querySelector('td.name') || cells[0];
+      const minCell = row.querySelector('td.min') || cells[1];
+      const maxCell = row.querySelector('td.max') || cells[2];
+      const scaleCell = row.querySelector('td.scale') || cells[3];
+      
+      const name = nameCell?.textContent?.trim();
+      if (name) {
+        variables.push({
+          name,
+          min: parseFloat(minCell?.textContent?.trim()) || 0,
+          max: parseFloat(maxCell?.textContent?.trim()) || 100,
+          scale: parseInt(scaleCell?.textContent?.trim()) || 0
+        });
+      }
+    });
+  } else {
+    // Fallback: try individual variable divs
+    questionDiv.querySelectorAll('.variable_definition, .variable').forEach(varDiv => {
+      const nameEl = varDiv.querySelector('.variable_name, .name');
+      const minEl = varDiv.querySelector('.variable_min, .min');
+      const maxEl = varDiv.querySelector('.variable_max, .max');
+      const scaleEl = varDiv.querySelector('.variable_scale, .decimal_places');
+      
+      if (nameEl?.textContent?.trim()) {
+        variables.push({
+          name: nameEl.textContent.trim(),
+          min: parseFloat(minEl?.textContent?.trim()) || 0,
+          max: parseFloat(maxEl?.textContent?.trim()) || 100,
+          scale: parseInt(scaleEl?.textContent?.trim()) || 0
+        });
+      }
+    });
+  }
   
+  // Fix: Extract formulas from .formulas_list or formula definition elements
+  const formulas = [];
+  const formulasList = questionDiv.querySelector('.formulas_list');
+  if (formulasList) {
+    formulasList.querySelectorAll('div, span, li').forEach(el => {
+      const formula = el.textContent?.trim();
+      if (formula && !el.querySelector('div, span, li')) formulas.push(formula);
+    });
+  }
+  // Fallback: single formula element
   const formulaEl = questionDiv.querySelector('.formula_definition, .formula');
-  const formula = formulaEl?.textContent?.trim() || null;
+  const singleFormula = formulaEl?.textContent?.trim();
+  if (singleFormula && formulas.length === 0) formulas.push(singleFormula);
   
   const toleranceEl = questionDiv.querySelector('.answer_tolerance, .tolerance');
   const tolerance = parseFloat(toleranceEl?.textContent?.trim()) || 0;
   
+  const decimalEl = questionDiv.querySelector('.formula_decimal_places, .decimal_places_value');
+  const decimalPlaces = parseInt(decimalEl?.textContent?.trim()) || 0;
+  
+  // Fix: Extract solutions from equation_combinations table
   const solutions = [];
-  const solutionDivs = questionDiv.querySelectorAll('.combination, .generated_solution');
-  
-  solutionDivs.forEach((solDiv, idx) => {
-    const inputs = {};
-    solDiv.querySelectorAll('.variable_value, .var_value').forEach(varVal => {
-      const name = varVal.getAttribute('data-variable') || varVal.className.match(/var_(\w+)/)?.[1];
-      if (name) inputs[name] = parseFloat(varVal.textContent.trim());
-    });
+  const combinationsTable = questionDiv.querySelector('.equation_combinations, .combinations_table');
+  if (combinationsTable) {
+    const headerCells = combinationsTable.querySelectorAll('thead th');
+    const varNames = Array.from(headerCells)
+      .map(th => th.textContent?.trim())
+      .filter(n => n && n.toLowerCase() !== 'answer');
     
-    const outputEl = solDiv.querySelector('.answer, .result');
-    const output = outputEl ? parseFloat(outputEl.textContent.trim()) : null;
-    
-    if (Object.keys(inputs).length > 0 || output !== null) {
+    combinationsTable.querySelectorAll('tbody tr').forEach((row, idx) => {
+      const cells = row.querySelectorAll('td');
+      const inputs = {};
+      varNames.forEach((varName, i) => {
+        if (cells[i]) inputs[varName] = parseFloat(cells[i].textContent?.trim()) || 0;
+      });
+      const answerCell = row.querySelector('td.final_answer') || cells[cells.length - 1];
+      const output = answerCell ? parseFloat(answerCell.textContent?.trim()) : null;
       solutions.push({ id: `sol_${idx}`, inputs, output });
-    }
-  });
+    });
+  } else {
+    // Fallback: try individual solution divs
+    questionDiv.querySelectorAll('.combination, .generated_solution').forEach((solDiv, idx) => {
+      const inputs = {};
+      solDiv.querySelectorAll('.variable_value, .var_value').forEach(varVal => {
+        const name = varVal.getAttribute('data-variable') || varVal.className.match(/var_(\w+)/)?.[1];
+        if (name) inputs[name] = parseFloat(varVal.textContent.trim());
+      });
+      
+      const outputEl = solDiv.querySelector('.answer, .result');
+      const output = outputEl ? parseFloat(outputEl.textContent.trim()) : null;
+      
+      if (Object.keys(inputs).length > 0 || output !== null) {
+        solutions.push({ id: `sol_${idx}`, inputs, output });
+      }
+    });
+  }
   
-  return { variables, formula, tolerance, solutions };
+  return { variables, formulas, formula: formulas[0] || null, tolerance, decimalPlaces, solutions };
 }
 
 function extractFeedback(questionDiv) {
