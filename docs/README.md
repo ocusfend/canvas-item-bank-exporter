@@ -6,6 +6,7 @@ This folder contains technical documentation for the Canvas Quiz Bank Exporter b
 
 | Document | Description |
 |----------|-------------|
+| [INSTALLATION.md](./INSTALLATION.md) | Installation instructions and usage guide for the browser extension |
 | [EXPORT_SCHEMA.md](./EXPORT_SCHEMA.md) | JSON export schemas for both Classic Quizzes and New Quizzes Item Banks, including format detection, field definitions, and example exports |
 
 ## Quick Links
